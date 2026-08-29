@@ -205,4 +205,58 @@ describe('neteaseProvider', () => {
         vi.mocked(neteaseApi.checkQr).mockResolvedValue({ code } as any);
         await expect(neteaseProvider.auth!.checkQr!('key')).resolves.toMatchObject({ state });
     });
+
+    it('falls back to the unblock source when the standard grant is missing and unlock is allowed', async () => {
+        vi.mocked(neteaseApi.getSongUrl)
+            .mockResolvedValueOnce({ data: [{ url: null }] } as any)
+            .mockResolvedValueOnce({ data: [{ url: 'http://m701.music.126.net/unblocked.flac' }] } as any);
+
+        await expect(neteaseProvider.playback!.getAudioSource(song, 'high', { allowUnlock: true })).resolves.toMatchObject({
+            url: 'https://m701.music.126.net/unblocked.flac',
+            quality: 'high',
+            unlocked: { from: 'netease-unblock' },
+        });
+        expect(neteaseApi.getSongUrl).toHaveBeenNthCalledWith(1, 42, 'exhigh');
+        expect(neteaseApi.getSongUrl).toHaveBeenNthCalledWith(2, 42, 'exhigh', { unblock: true });
+    });
+
+    it('treats a trial-only grant (freeTrialInfo) as not fully playable and unlocks it', async () => {
+        vi.mocked(neteaseApi.getSongUrl)
+            .mockResolvedValueOnce({ data: [{ url: 'https://music.test/trial.mp3', freeTrialInfo: { start: 0, end: 45 } }] } as any)
+            .mockResolvedValueOnce({ data: [{ url: 'https://music.test/full.flac' }] } as any);
+
+        await expect(neteaseProvider.playback!.getAudioSource(song, 'high', { allowUnlock: true })).resolves.toMatchObject({
+            url: 'https://music.test/full.flac',
+            unlocked: { from: 'netease-unblock' },
+        });
+    });
+
+    it('keeps the standard trial URL when unlock is not allowed', async () => {
+        vi.mocked(neteaseApi.getSongUrl).mockResolvedValue({
+            data: [{ url: 'https://music.test/trial.mp3', freeTrialInfo: { start: 0, end: 45 } }],
+        } as any);
+
+        await expect(neteaseProvider.playback!.getAudioSource(song, 'high')).resolves.toMatchObject({
+            url: 'https://music.test/trial.mp3',
+        });
+        expect(neteaseApi.getSongUrl).toHaveBeenCalledTimes(1);
+        expect(neteaseApi.getSongUrl).toHaveBeenCalledWith(42, 'exhigh');
+    });
+
+    it('returns null when the unblock attempt also fails', async () => {
+        vi.mocked(neteaseApi.getSongUrl)
+            .mockResolvedValueOnce({ data: [{ url: null }] } as any)
+            .mockResolvedValueOnce({ data: [{ url: null }] } as any);
+
+        await expect(neteaseProvider.playback!.getAudioSource(song, 'high', { allowUnlock: true })).resolves.toBeNull();
+        expect(neteaseApi.getSongUrl).toHaveBeenCalledTimes(2);
+    });
+
+    it('keeps the standard error semantics when the backend does not implement unblock', async () => {
+        vi.mocked(neteaseApi.getSongUrl)
+            .mockResolvedValueOnce({ data: [{ url: null }] } as any)
+            .mockRejectedValueOnce(new Error('backend unblock unsupported'));
+
+        await expect(neteaseProvider.playback!.getAudioSource(song, 'high', { allowUnlock: true })).resolves.toBeNull();
+    });
 });

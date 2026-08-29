@@ -82,6 +82,19 @@ export interface ProviderAudioSource {
     expiresAt?: number;
     quality: AudioQualityPreference;
     replayGain?: ReplayGainInfo;
+    /** 该音源不是歌曲所属 provider 的原始授权源，而是解锁/替换后的可播放源。 */
+    unlocked?: {
+        /** 解锁方式：同平台 unblock 完整音源，或跨平台音源替换。 */
+        from: 'netease-unblock' | 'kugou' | 'qq';
+        /** 跨平台替换时被选中的目标歌曲 key（保留原歌曲身份，不污染播放/收藏身份）。 */
+        matchedSongKey?: string;
+    };
+}
+
+/** 获取音源时的可选行为开关，由 Omni 调用方（app 级解锁编排）决定。 */
+export interface AudioSourceOptions {
+    /** 允许 provider 在标准授权失败时尝试同平台解锁（netease 为 unblock=true）。 */
+    allowUnlock?: boolean;
 }
 
 export type ProviderSongAvailabilityState = 'playable' | 'unavailable' | 'unknown';
@@ -204,7 +217,7 @@ export interface OnlineSearchProvider {
 
 export interface OnlinePlaybackProvider {
     getSongDetail(id: MediaId): Promise<UnifiedSong | null>;
-    getAudioSource(song: SongResult, quality: AudioQualityPreference): Promise<ProviderAudioSource | null>;
+    getAudioSource(song: SongResult, quality: AudioQualityPreference, options?: AudioSourceOptions): Promise<ProviderAudioSource | null>;
     getAvailability?(song: SongResult): ProviderSongAvailability;
     getReplacement?(song: SongResult): Promise<ProviderSongReplacement | null>;
 }

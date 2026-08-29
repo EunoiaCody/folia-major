@@ -262,10 +262,34 @@ export const neteaseProvider: OnlineMusicProvider = {
             const raw = response?.songs?.[0];
             return raw ? normalizeNeteaseSong(raw) : null;
         },
-        async getAudioSource(song, quality) {
-            const response = await neteaseApi.getSongUrl(toNeteaseId(song.id), mapQuality(quality));
+        async getAudioSource(song, quality, options) {
+            const level = mapQuality(quality);
+            const response = await neteaseApi.getSongUrl(toNeteaseId(song.id), level);
             const raw = response?.data?.[0];
             const rawUrl = raw?.url;
+            // A present URL with a trial fragment (freeTrialInfo) is only a preview; treat it as
+            // not fully playable so the unlock path can return the full-length source instead.
+            const isTrialOnly = rawUrl && raw?.freeTrialInfo != null;
+            if ((!rawUrl || isTrialOnly) && options?.allowUnlock) {
+                try {
+                    const unblockResponse = await neteaseApi.getSongUrl(toNeteaseId(song.id), level, { unblock: true });
+                    const unblockRaw = unblockResponse?.data?.[0];
+                    const unblockUrl = unblockRaw?.url;
+                    if (unblockUrl) {
+                        console.log(`[NeteaseProvider] unblock source for song ${song.id}: ${String(unblockUrl).slice(0, 90)}...`);
+                        return {
+                            url: String(unblockUrl).replace(/^http:/, 'https:'),
+                            fetchedAt: Date.now(),
+                            quality,
+                            unlocked: { from: 'netease-unblock' },
+                        };
+                    }
+                } catch (error) {
+                    // The backend may not implement unblock (plain NeteaseCloudMusicApi) or may be
+                    // rate-limited by third-party matchers; keep the standard result semantics.
+                    console.warn('[NeteaseProvider] unblock attempt failed for song', song.id, error);
+                }
+            }
             if (!rawUrl) return null;
             const trackGain = toFiniteNumber(raw?.gain);
             return {

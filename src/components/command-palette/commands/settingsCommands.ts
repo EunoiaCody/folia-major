@@ -5,11 +5,30 @@ import { hasUploadedObsAsset } from '../../../utils/visualSettingsConfig';
 import type { CommandPaletteCommand } from '../types';
 import { createToggleCommand, createAppLanguageCommand, createSettingsCommand } from '../commandFactories';
 import { sleepTimerCommand } from './sleepTimerCommand';
+import { Settings2 } from 'lucide-react';
 
 // src/components/command-palette/commands/settingsCommands.ts
 // Commands in the `settings` group: settings subviews, app toggles, theme, sync, and desktop-only switches.
 
 export const settingsCommands: CommandPaletteCommand[] = [
+    createToggleCommand(
+        'unlock-vip-songs-toggle',
+        'settings',
+        'VIP song unlock',
+        'Toggle full-length playback for VIP NetEase songs',
+        ['vip unlock', 'unlock vip', 'unlock songs', 'vip歌曲解锁', '解锁vip', '解锁歌曲', 'vip解锁', 'vipjiesuo', 'jiesuovip', 'vipjs', 'jsvip'],
+        context => context.settings.toggleUnlockVipSongs(),
+        { icon: Settings2 },
+    ),
+    createToggleCommand(
+        'unlock-cross-provider-fallback-toggle',
+        'settings',
+        'Cross-provider song fallback',
+        'Search Kugou/QQ for the same song when unlock fails',
+        ['cross provider', 'song fallback', 'kuwo fallback', '酷狗替换', 'QQ替换', '跨平台替换', '跨源替换', 'kuaPingtaitihuan', 'kuapingtaitihuan', 'kuaPingTai', 'kptyh', 'kpty'],
+        context => context.settings.toggleUnlockUseCrossProviderFallback(),
+        { icon: Settings2 },
+    ),
     createSettingsCommand('settings-help', 'Open Help', 'Open help and shortcuts', ['help', '帮助', 'bangzhu', 'bz'], 'help', null, { executeShortcut: 'h' }),
     sleepTimerCommand,
     {

@@ -663,12 +663,17 @@ export const neteaseApi = {
   },
 
   // --- Song Data ---
-  getSongUrl: async (id: number, level: string = 'exhigh') => {
+  getSongUrl: async (id: number, level: string = 'exhigh', options?: { unblock?: boolean }) => {
     // Use exhigh (320k) by default to ensure VIP songs have a valid signed URL.
     // 'standard' often returns null or invalid links for VIP content even if logged in.
     // randomCNIP=true added to improve success rate for some restricted tracks
     // https=true ensures URLs are returned with HTTPS protocol to avoid mixed content issues
-    return fetchWithCreds(`/song/url/v1?id=${id}&level=${level}&randomCNIP=true&https=true`);
+    // unblock=true asks the enhanced API backend (Electron bundled / deployed VITE_NETEASE_API_BASE)
+    // to return a playable full-length source via its unblock music matcher when the standard
+    // grant fails or only yields a trial fragment. The backend falls back to the normal response
+    // when the enhanced service does not implement this parameter.
+    const unblockQuery = options?.unblock ? '&unblock=true' : '';
+    return fetchWithCreds(`/song/url/v1?id=${id}&level=${level}&randomCNIP=true&https=true${unblockQuery}`);
   },
 
   getLyric: async (id: number) => {

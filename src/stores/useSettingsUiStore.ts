@@ -1428,6 +1428,15 @@ export type SettingsUiState = {
     staticMode: boolean;
     disableHomeDynamicBackground: boolean;
     autoUseBestLyric: boolean;
+    /**
+     * VIP 歌曲解锁总开关：网易云标准授权失败时，先用同平台 unblock 完整音源，
+     * 再按需跨 provider 替换。关闭时完全保持原播放行为。
+     */
+    unlockVipSongs: boolean;
+    /**
+     * 同平台 unblock 仍不可用时，是否允许跨 provider（酷狗/QQ）搜索同曲替换音源。
+     */
+    unlockUseCrossProviderFallback: boolean;
     preferredAlternativeLyricSource: LyricProviderSource;
     localLyricsPriority: LocalLyricsPriority;
     hidePlayerProgressBar: boolean;
@@ -1585,6 +1594,8 @@ export type SettingsUiState = {
     handleToggleStaticMode: (enable: boolean) => void;
     handleToggleDisableHomeDynamicBackground: (disable: boolean) => void;
     handleToggleAutoUseBestLyric: (enable: boolean) => void;
+    handleToggleUnlockVipSongs: (enable: boolean) => void;
+    handleToggleUnlockUseCrossProviderFallback: (enable: boolean) => void;
     handleSetPreferredAlternativeLyricSource: (source: LyricProviderSource) => void;
     handleSetLocalLyricsPriority: (priority: LocalLyricsPriority) => void;
     handleToggleHidePlayerProgressBar: (enable: boolean) => void;
@@ -1735,6 +1746,8 @@ export const useSettingsUiStore = create<SettingsUiState>((set, get) => ({
     staticMode: getStoredBoolean('static_mode', false),
     disableHomeDynamicBackground: readStoredDisableHomeDynamicBackground(),
     autoUseBestLyric: getStoredBoolean('auto_use_best_lyric', true),
+    unlockVipSongs: getStoredBoolean('unlock_vip_songs', true),
+    unlockUseCrossProviderFallback: getStoredBoolean('unlock_use_cross_provider_fallback', true),
     preferredAlternativeLyricSource: readStoredPreferredAlternativeLyricSource(),
     localLyricsPriority: readStoredLocalLyricsPriority(),
     hidePlayerProgressBar: getStoredBoolean('hide_player_progress_bar', false),
@@ -1987,6 +2000,22 @@ export const useSettingsUiStore = create<SettingsUiState>((set, get) => ({
         notify(get, {
             type: 'info',
             text: i18n.t('notifications.' + (enable ? 'autoBestLyricOn' : 'autoBestLyricOff')),
+        });
+    },
+    handleToggleUnlockVipSongs: (enable) => {
+        setStoredBoolean('unlock_vip_songs', enable);
+        set({ unlockVipSongs: enable });
+        notify(get, {
+            type: 'info',
+            text: i18n.t('notifications.' + (enable ? 'unlockVipSongsOn' : 'unlockVipSongsOff')),
+        });
+    },
+    handleToggleUnlockUseCrossProviderFallback: (enable) => {
+        setStoredBoolean('unlock_use_cross_provider_fallback', enable);
+        set({ unlockUseCrossProviderFallback: enable });
+        notify(get, {
+            type: 'info',
+            text: i18n.t('notifications.' + (enable ? 'unlockCrossFallbackOn' : 'unlockCrossFallbackOff')),
         });
     },
     handleSetPreferredAlternativeLyricSource: (source) => {

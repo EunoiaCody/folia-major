@@ -42,22 +42,30 @@ const PlaybackSettingsSubview: React.FC<PlaybackSettingsSubviewProps> = ({
     const {
         audioOutputDeviceId,
         autoUseBestLyric,
+        unlockVipSongs,
+        unlockUseCrossProviderFallback,
         preferredAlternativeLyricSource,
         localLyricsPriority,
         queueAddBehavior,
         globalLyricTimelineOffsetMs,
         onToggleAutoUseBestLyric,
+        onToggleUnlockVipSongs,
+        onToggleUnlockUseCrossProviderFallback,
         onPreferredAlternativeLyricSourceChange,
         onLocalLyricsPriorityChange,
         onQueueAddBehaviorChange,
     } = useSettingsUiStore(useShallow(state => ({
         audioOutputDeviceId: state.audioOutputDeviceId,
         autoUseBestLyric: state.autoUseBestLyric,
+        unlockVipSongs: state.unlockVipSongs,
+        unlockUseCrossProviderFallback: state.unlockUseCrossProviderFallback,
         preferredAlternativeLyricSource: state.preferredAlternativeLyricSource,
         localLyricsPriority: state.localLyricsPriority,
         queueAddBehavior: state.queueAddBehavior,
         globalLyricTimelineOffsetMs: state.globalLyricTimelineOffsetMs,
         onToggleAutoUseBestLyric: state.handleToggleAutoUseBestLyric,
+        onToggleUnlockVipSongs: state.handleToggleUnlockVipSongs,
+        onToggleUnlockUseCrossProviderFallback: state.handleToggleUnlockUseCrossProviderFallback,
         onPreferredAlternativeLyricSourceChange: state.handleSetPreferredAlternativeLyricSource,
         onLocalLyricsPriorityChange: state.handleSetLocalLyricsPriority,
         onQueueAddBehaviorChange: state.handleSetQueueAddBehavior,
@@ -228,6 +236,37 @@ const PlaybackSettingsSubview: React.FC<PlaybackSettingsSubviewProps> = ({
                                 {option.label}
                             </button>
                         ))}
+                    </div>
+                </div>
+            </section>
+
+            <section>
+                <h3 className="text-sm font-bold uppercase tracking-wider opacity-50 mb-4 flex items-center gap-2" style={{ color: 'var(--text-secondary)' }}>
+                    <Settings2 size={14} /> {t('options.unlockVipSongsSection')}
+                </h3>
+                <div className={`rounded-xl border overflow-hidden ${settingsCardClass}`}>
+                    <div className="p-4 flex items-center justify-between gap-4">
+                        <div className="space-y-1">
+                            <div className="text-sm font-medium flex items-center gap-2" style={{ color: 'var(--text-primary)' }}>
+                                <Settings2 size={14} />
+                                {t('options.unlockVipSongs')}
+                            </div>
+                            <div className="text-[11px] opacity-50 max-w-[420px]" style={{ color: 'var(--text-secondary)' }}>
+                                {t('options.unlockVipSongsDesc')}
+                            </div>
+                        </div>
+                        {renderToggle(unlockVipSongs, () => onToggleUnlockVipSongs(!unlockVipSongs))}
+                    </div>
+                    <div className="p-4 flex items-center justify-between gap-4 border-t" style={{ borderColor: 'var(--border-primary, rgba(255,255,255,0.06))' }}>
+                        <div className="space-y-1">
+                            <div className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
+                                {t('options.unlockUseCrossProviderFallback')}
+                            </div>
+                            <div className="text-[11px] opacity-50 max-w-[420px]" style={{ color: 'var(--text-secondary)' }}>
+                                {t('options.unlockUseCrossProviderFallbackDesc')}
+                            </div>
+                        </div>
+                        {renderToggle(unlockUseCrossProviderFallback, () => onToggleUnlockUseCrossProviderFallback(!unlockUseCrossProviderFallback))}
                     </div>
                 </div>
             </section>

@@ -116,6 +116,10 @@ export type CommandPaletteContextDeps = {
     handleSetTransitionMode: (mode: TransitionMode) => void;
     handleToggleTransitionPerformance: (enable: boolean) => void;
     canUseTransitionPerformance: () => boolean;
+    unlockVipSongs: boolean;
+    handleToggleUnlockVipSongs: (enable: boolean) => void;
+    unlockUseCrossProviderFallback: boolean;
+    handleToggleUnlockUseCrossProviderFallback: (enable: boolean) => void;
 
     visualizerMode: VisualizerMode;
     visualizerBackgroundMode: VisualizerBackgroundMode | null;
@@ -221,6 +225,10 @@ export const buildCommandPaletteContext = (deps: CommandPaletteContextDeps): Com
         setTransitionMode: deps.handleSetTransitionMode,
         toggleTransitionPerformance: () => deps.handleToggleTransitionPerformance(!deps.transitionPerformance),
         canUseTransitionPerformance: deps.canUseTransitionPerformance,
+        unlockVipSongs: deps.unlockVipSongs,
+        toggleUnlockVipSongs: () => deps.handleToggleUnlockVipSongs(!deps.unlockVipSongs),
+        unlockUseCrossProviderFallback: deps.unlockUseCrossProviderFallback,
+        toggleUnlockUseCrossProviderFallback: () => deps.handleToggleUnlockUseCrossProviderFallback(!deps.unlockUseCrossProviderFallback),
     },
     visualizer: {
         visualizerMode: deps.visualizerMode,

@@ -183,6 +183,12 @@ export type CommandPaletteSettingsContext = {
     toggleAutomix: () => void;
     setTransitionMode: (mode: TransitionMode) => void;
     toggleTransitionPerformance: () => void;
+    /** VIP 歌曲解锁开关：与播放设置面板同一状态源。 */
+    unlockVipSongs: boolean;
+    toggleUnlockVipSongs: () => void;
+    /** 跨 provider 替换开关：同平台 unblock 不可用时是否搜索酷狗/QQ 同曲音源。 */
+    unlockUseCrossProviderFallback: boolean;
+    toggleUnlockUseCrossProviderFallback: () => void;
     /**
      * Whether performance mode has anything to run on - the same `capabilities.stems` the settings
      * panel disables its switch by.

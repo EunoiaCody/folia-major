@@ -1,6 +1,7 @@
 import type { SongResult, UnifiedSong } from '../../types';
 import type {
     AudioQualityPreference,
+    AudioSourceOptions,
     MediaId,
     OmniAudioSource,
     OmniChorusRange,
@@ -406,8 +407,8 @@ export const omni = {
         return Boolean(providerForSong(song).playback);
     },
 
-    async getAudioSource(song: SongResult, quality: AudioQualityPreference): Promise<OmniAudioSource | null> {
-        const source = await (providerForSong(song).playback?.getAudioSource(song, quality) ?? null);
+    async getAudioSource(song: SongResult, quality: AudioQualityPreference, options?: AudioSourceOptions): Promise<OmniAudioSource | null> {
+        const source = await (providerForSong(song).playback?.getAudioSource(song, quality, options) ?? null);
         // Written here rather than at either caller because this is the only moment a provider ever
         // states a track's ReplayGain, and both callers - the prefetch pass and playback itself -
         // may be the one that happens to see it. See getCachedSongReplayGain for what is lost

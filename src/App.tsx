@@ -184,6 +184,10 @@ export default function App() {
     const handleToggleAutomix = useSettingsUiStore(state => state.handleToggleAutomix);
     const handleSetTransitionMode = useSettingsUiStore(state => state.handleSetTransitionMode);
     const handleToggleTransitionPerformance = useSettingsUiStore(state => state.handleToggleTransitionPerformance);
+    const unlockVipSongs = useSettingsUiStore(state => state.unlockVipSongs);
+    const handleToggleUnlockVipSongs = useSettingsUiStore(state => state.handleToggleUnlockVipSongs);
+    const unlockUseCrossProviderFallback = useSettingsUiStore(state => state.unlockUseCrossProviderFallback);
+    const handleToggleUnlockUseCrossProviderFallback = useSettingsUiStore(state => state.handleToggleUnlockUseCrossProviderFallback);
     /**
      * The same test the settings panel disables its performance switch by, for the command palette.
      *
@@ -2349,6 +2353,10 @@ export default function App() {
         handleSetTransitionMode,
         handleToggleTransitionPerformance,
         canUseTransitionPerformance,
+        unlockVipSongs,
+        handleToggleUnlockVipSongs,
+        unlockUseCrossProviderFallback,
+        handleToggleUnlockUseCrossProviderFallback,
 
         visualizerMode,
         visualizerBackgroundMode,
@@ -2445,6 +2453,8 @@ export default function App() {
         transitionMode,
         transitionPerformance,
         transparentPlayerBackground,
+        unlockUseCrossProviderFallback,
+        unlockVipSongs,
         visualizerBackgroundMode,
         visualizerMode,
         voiceInputPauseEnabled,
