@@ -117,6 +117,16 @@ export const toSafePlaybackUrl = (
     return toSafeRemoteUrl(normalizedUrl);
 };
 
+/**
+ * 判断是否为网易云试听片段 URL（路径含 jd-musicrep-ts / musicrep）。
+ * 试听片段只有约 40-45 秒；解锁开启时这类缓存/预取地址必须被忽略，
+ * 强制重新走完整音源链路，否则旧缓存会把 VIP 歌钉死在试听上。
+ */
+export const isNeteaseTrialAudioUrl = (url: string | null | undefined): boolean => {
+    if (!url) return false;
+    return /(^|\/)jd-musicrep-ts(\/|$)/.test(url) || /(^|\/)musicrep\//.test(url);
+};
+
 export const resolveDebugSongSource = (song: SongResult | null): 'none' | 'local' | 'navidrome' | 'online' => {
     if (isStagePlaybackSong(song)) {
         return 'online';

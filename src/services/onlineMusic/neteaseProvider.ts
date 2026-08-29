@@ -12,9 +12,10 @@ import type {
 } from '../../types/onlineMusic';
 import { getPersonalFmRequestOptions } from '../../stores/usePersonalFmModeStore';
 import { parseNeteaseChorusRanges, processNeteaseLyrics } from '../../utils/lyrics/neteaseProcessing';
+import { isSongMarkedUnavailable, neteaseApi } from '../netease';
 import { toFiniteNumber } from '../../utils/replayGain';
 import { createProviderSongMetadata } from '../../utils/songMetadata';
-import { isSongMarkedUnavailable, neteaseApi } from '../netease';
+import { isNeteaseTrialAudioUrl } from '../../utils/appPlaybackHelpers';
 import { writeProviderSessionValue } from './providerStorage';
 
 // src/services/onlineMusic/neteaseProvider.ts
@@ -269,7 +270,9 @@ export const neteaseProvider: OnlineMusicProvider = {
             const rawUrl = raw?.url;
             // A present URL with a trial fragment (freeTrialInfo) is only a preview; treat it as
             // not fully playable so the unlock path can return the full-length source instead.
-            const isTrialOnly = rawUrl && raw?.freeTrialInfo != null;
+            // The path marker (jd-musicrep-ts) is a second safety net for grants that omit
+            // freeTrialInfo but still only yield the ~40s preview.
+            const isTrialOnly = rawUrl && (raw?.freeTrialInfo != null || isNeteaseTrialAudioUrl(String(rawUrl)));
             if ((!rawUrl || isTrialOnly) && options?.allowUnlock) {
                 try {
                     const unblockResponse = await neteaseApi.getSongUrl(toNeteaseId(song.id), level, { unblock: true });

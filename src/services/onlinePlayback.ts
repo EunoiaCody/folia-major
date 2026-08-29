@@ -11,7 +11,7 @@ import type { AudioQualityPreference, MediaId } from '../types/onlineMusic';
 import { omni } from './onlineMusic/omni';
 import { getSongResourceCacheKey } from './onlineMusic/resourceKeys';
 import { getCachedSongAudioBlob, getCachedSongReplayGain, getSongCacheWithLegacyMigration } from './onlineMusic/resourceCache';
-import { toSafePlaybackUrl } from '../utils/appPlaybackHelpers';
+import { toSafePlaybackUrl, isNeteaseTrialAudioUrl } from '../utils/appPlaybackHelpers';
 import { getProviderSongMetadata } from './onlineMusic/songMetadata';
 import { resolveUnlockedAudioSource } from './unlockService';
 
@@ -38,7 +38,13 @@ export async function loadOnlineSongAudioSource(
         }
     }
 
-    if (prefetched?.audioUrl && prefetched.audioUrl !== 'CACHED_IN_DB' && isUrlValid(prefetched.audioUrlFetchedAt)) {
+    // 预取缓存里可能是旧的试听地址（jd-musicrep-ts）——解锁开启时忽略它，强制重新解析完整音源。
+    if (
+        prefetched?.audioUrl
+        && prefetched.audioUrl !== 'CACHED_IN_DB'
+        && isUrlValid(prefetched.audioUrlFetchedAt)
+        && !(useSettingsUiStore.getState().unlockVipSongs && isNeteaseTrialAudioUrl(prefetched.audioUrl))
+    ) {
         return {
             kind: 'ok',
             audioSrc: prefetched.audioUrl,

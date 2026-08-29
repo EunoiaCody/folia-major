@@ -231,6 +231,18 @@ describe('neteaseProvider', () => {
         });
     });
 
+    it('unlocks a grant whose URL carries the trial path marker even without freeTrialInfo', async () => {
+        vi.mocked(neteaseApi.getSongUrl)
+            .mockResolvedValueOnce({ data: [{ url: 'http://m702.music.126.net/2026/x/jd-musicrep-ts/e27f/37bd/trial.mp3' }] } as any)
+            .mockResolvedValueOnce({ data: [{ url: 'https://music.test/full.flac' }] } as any);
+
+        await expect(neteaseProvider.playback!.getAudioSource(song, 'high', { allowUnlock: true })).resolves.toMatchObject({
+            url: 'https://music.test/full.flac',
+            unlocked: { from: 'netease-unblock' },
+        });
+        expect(neteaseApi.getSongUrl).toHaveBeenNthCalledWith(2, 42, 'exhigh', { unblock: true });
+    });
+
     it('keeps the standard trial URL when unlock is not allowed', async () => {
         vi.mocked(neteaseApi.getSongUrl).mockResolvedValue({
             data: [{ url: 'https://music.test/trial.mp3', freeTrialInfo: { start: 0, end: 45 } }],
