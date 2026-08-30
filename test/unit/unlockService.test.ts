@@ -14,6 +14,7 @@ vi.mock('@/stores/useSettingsUiStore', () => ({
 const omniGetAudioSourceMock = vi.hoisted(() => vi.fn());
 const omniSearchProviderSongsMock = vi.hoisted(() => vi.fn());
 const omniGetProviderAvailabilityMock = vi.hoisted(() => vi.fn(() => ({ configured: true })));
+const kuwoResolveMock = vi.hoisted(() => vi.fn(async () => null as string | null));
 
 vi.mock('@/services/onlineMusic/omni', () => ({
     omni: {
@@ -21,6 +22,10 @@ vi.mock('@/services/onlineMusic/omni', () => ({
         searchProviderSongs: omniSearchProviderSongsMock,
         getProviderAvailability: omniGetProviderAvailabilityMock,
     },
+}));
+
+vi.mock('@/services/kuwoClient', () => ({
+    resolveKuwoDirectSource: kuwoResolveMock,
 }));
 
 import { resolveUnlockedAudioSource } from '@/services/unlockService';
@@ -169,6 +174,7 @@ describe('resolveUnlockedAudioSource', () => {
         const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
         const song = makeSong();
         omniGetAudioSourceMock.mockResolvedValue(null);
+        kuwoResolveMock.mockResolvedValue(null);
         omniSearchProviderSongsMock.mockResolvedValue({ items: [], hasMore: false, nextOffset: 0 });
 
         const result = await resolveUnlockedAudioSource(song, 'high');
@@ -176,5 +182,19 @@ describe('resolveUnlockedAudioSource', () => {
         expect(result).toBeNull();
         expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('[UnlockService] all unlock channels failed'));
         warnSpy.mockRestore();
+    });
+
+    it('falls back to the client-side kuwo direct source before cross-provider search', async () => {
+        getStateMock.mockReturnValue({ unlockVipSongs: true, unlockUseCrossProviderFallback: true });
+        const song = makeSong();
+        omniGetAudioSourceMock.mockResolvedValue(null);
+        kuwoResolveMock.mockResolvedValue('http://bd-er.kuwo.cn/trackmedia/song.mp3');
+
+        const result = await resolveUnlockedAudioSource(song, 'high');
+
+        expect(result?.url).toBe('https://bd-er.kuwo.cn/trackmedia/song.mp3');
+        expect(result?.unlocked).toEqual({ from: 'kuwo' });
+        expect(kuwoResolveMock).toHaveBeenCalledWith('晴天', '周杰伦', 269000);
+        expect(omniSearchProviderSongsMock).not.toHaveBeenCalled();
     });
 });

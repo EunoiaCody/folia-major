@@ -85,7 +85,7 @@ export interface ProviderAudioSource {
     /** 该音源不是歌曲所属 provider 的原始授权源，而是解锁/替换后的可播放源。 */
     unlocked?: {
         /** 解锁方式：同平台 unblock 完整音源，或跨平台音源替换。 */
-        from: 'netease-unblock' | 'kugou' | 'qq';
+        from: 'netease-unblock' | 'kugou' | 'qq' | 'kuwo';
         /** 跨平台替换时被选中的目标歌曲 key（保留原歌曲身份，不污染播放/收藏身份）。 */
         matchedSongKey?: string;
     };

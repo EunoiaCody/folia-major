@@ -5,6 +5,7 @@ import { useSettingsUiStore } from '../stores/useSettingsUiStore';
 import { calculateMatchScoreDetails } from '../utils/lyrics/matchScore';
 import { buildLyricSearchQuery } from '../utils/lyrics/searchQuery';
 import { getPlaybackSongKey } from '../utils/appPlaybackGuards';
+import { resolveKuwoDirectSource } from './kuwoClient';
 
 // src/services/unlockService.ts
 // 显式 cross-provider 编排：当歌曲所属 provider 的标准授权音源不可用时，
@@ -88,8 +89,26 @@ export const resolveUnlockedAudioSource = async (
         return null;
     }
 
-    // 3：跨 provider 替换（显式 cross-provider，保留每条结果的 providerId）。
+    // 3：客户端直连酷我（用户自己的 IP，绕开服务器 IP 被酷我风控的问题；
+    // 不依赖任何服务端配置，与 SPlayer 的 bodian 源同链路）。
     const target = buildTargetSong(song);
+    try {
+        const kuwoUrl = await resolveKuwoDirectSource(target.title, target.artist, target.durationMs);
+        if (kuwoUrl) {
+            const safeUrl = kuwoUrl.replace(/^http:/, 'https:');
+            console.log(`[UnlockService] client-side kuwo direct for "${song.name}" -> ${safeUrl.slice(0, 90)}...`);
+            return {
+                url: safeUrl,
+                fetchedAt: Date.now(),
+                quality,
+                unlocked: { from: 'kuwo' },
+            };
+        }
+    } catch (error) {
+        console.warn(`[UnlockService] kuwo direct failed for song "${song.name}"`, error);
+    }
+
+    // 4：跨 provider 替换（显式 cross-provider，保留每条结果的 providerId）。
     for (const providerId of UNLOCK_FALLBACK_PROVIDERS) {
         try {
             // 未配置的 provider（Web 端缺 VITE_KUGOU_API_BASE / VITE_QQ_API_BASE）
