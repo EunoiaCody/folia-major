@@ -10,6 +10,7 @@ import type {
     ProviderArtistSummary,
     ProviderUser,
 } from '../../types/onlineMusic';
+import { OnlineProviderError } from '../../types/onlineMusic';
 import { getPersonalFmRequestOptions } from '../../stores/usePersonalFmModeStore';
 import { parseNeteaseChorusRanges, processNeteaseLyrics } from '../../utils/lyrics/neteaseProcessing';
 import { isSongMarkedUnavailable, neteaseApi } from '../netease';
@@ -363,6 +364,23 @@ export const neteaseProvider: OnlineMusicProvider = {
             }
             if (response?.code === 801) return { state: 'waiting' };
             return { state: 'error', message: response?.message };
+        },
+        supportsPhoneCaptchaLogin: () => true,
+        async sendLoginCaptcha(phone) {
+            const response = await neteaseApi.sendLoginCaptcha(phone);
+            const ok = response?.code === 200;
+            const error = ok ? undefined : (response?.message ?? response?.msg ?? 'captcha send failed');
+            return { ok, error };
+        },
+        async loginByPhoneCaptcha(phone, captcha) {
+            const response = await neteaseApi.loginByPhoneCaptcha(phone, captcha);
+            const profile = response?.data?.profile ?? response?.profile;
+            if (response?.code === 200 && profile) {
+                return normalizeUser(profile);
+            }
+            // 验证码错误（code 400/403）等服务端拒绝时，把服务端 message 透传给 UI。
+            const message = response?.message ?? response?.msg ?? 'phone login failed';
+            throw new OnlineProviderError('auth-required', String(message), 'netease');
         },
     },
     library: {

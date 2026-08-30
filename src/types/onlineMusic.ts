@@ -253,6 +253,20 @@ export interface OnlineAuthProvider {
     // 二维码的有效期。声明了它，UI 才会自己计时并在到点时停止轮询、给出重试；
     // 不声明就沿用原本的做法——只认后端报出的过期状态。
     getQrTtlMs?(): number;
+    // ---- 手机号短信验证码登录（可选能力） ----
+    // 声明后 UI 会在登录弹窗里显示「手机号登录」入口。netease 支持；
+    // kugou / qq 不声明即不渲染，现有扫码流程完全不受影响。
+    supportsPhoneCaptchaLogin?(): boolean;
+    /** 发送短信验证码；服务端风控/限流/滑块要求时返回 ok=false 与服务端 message。 */
+    sendLoginCaptcha?(phone: string): Promise<PhoneCaptchaSendResult>;
+    /** 用验证码完成登录；成功返回用户（并已写入 provider session cookie）。 */
+    loginByPhoneCaptcha?(phone: string, captcha: string): Promise<ProviderUser>;
+}
+
+/** 短信验证码发送结果；error 优先透传服务端 message，不做猜测。 */
+export interface PhoneCaptchaSendResult {
+    ok: boolean;
+    error?: string;
 }
 
 export interface OnlineLibraryProvider {

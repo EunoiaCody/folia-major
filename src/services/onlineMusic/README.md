@@ -27,6 +27,7 @@ UI / hooks / stores / app services
 | --- | --- | --- |
 | provider 状态 | `getProviderSummaries`、`getActiveProviderSummary`、`getProviderCapabilities`、`getProviderAvailability` | `useOnlineProviderAccountStore` 提供 active provider 与账号快照 |
 | 账号/二维码 | `getLoginStatus`、`logout`、`createQrLogin`、`checkQrLogin` | provider auth adapter；不要在 UI 直接保留 raw session |
+| 手机号登录 | `canPhoneCaptchaLogin`、`sendLoginCaptcha`、`loginByPhoneCaptcha`（provider-explicit） | 仅声明 `supportsPhoneCaptchaLogin` 的 provider 可用（netease）；发送结果归一化 `PhoneCaptchaSendResult`，登录成功已写 provider session cookie |
 | 搜索 | `searchSongs`、`searchProviderSongs` | 普通搜索按 active provider；显式 provider 或跨 provider 用第二个方法 |
 | 用户库 | `getUserPlaylists`、`getProviderUserPlaylists`、`getUserAlbums`、`getLikedSongIds`、`getCloudCollection` | 统一 `OmniCollection` / page 类型，账号快照可先展示再静默刷新 |
 | 推荐 | `getHomeFeed`、`getPersonalFm`、`getDailySongs`、`getRecommendationHistory*`、`dislikeSong` | 首页推荐与历史推荐仍由 Omni 路由 |
@@ -42,7 +43,7 @@ UI / hooks / stores / app services
 ## Provider and cache files
 
 - `providerRegistry.ts`：注册、查找、按歌曲 `sourceRef` 选择 provider、能力检查。
-- `neteaseProvider.ts`：网易云 adapter，归一化到 Omni contract。`getAudioSource` 在标准授权缺失或仅试听（`freeTrialInfo`）且 `options.allowUnlock` 时，会请求后端 `/song/url/v1?unblock=true`（Electron 内置 `@neteasecloudmusicapienhanced/api` 或 Web 部署的增强版服务原生支持；普通 NeteaseCloudMusicApi 会忽略该参数，自动回到标准结果语义）。解锁音源仍是网易云 CDN 上的完整明文 FLAC/MP3，可直接交给 HTMLAudioElement，无需解密层。
+- `neteaseProvider.ts`：网易云 adapter，归一化到 Omni contract。`getAudioSource` 在标准授权缺失或仅试听（`freeTrialInfo`）且 `options.allowUnlock` 时，会请求后端 `/song/url/v1?unblock=true`（Electron 内置 `@neteasecloudmusicapienhanced/api` 或 Web 部署的增强版服务原生支持；普通 NeteaseCloudMusicApi 会忽略该参数，自动回到标准结果语义）。解锁音源仍是网易云 CDN 上的完整明文 FLAC/MP3，可直接交给 HTMLAudioElement，无需解密层。auth 额外声明 `supportsPhoneCaptchaLogin`：发送验证码走 `/captcha/sent`，登录走 `/login/cellphone?phone=&captcha=`（与扫码登录一致，登录响应 cookie 写入 provider session）。
 - `kugouProvider.ts`：酷狗 adapter；请求细节在 `kugouTransport.ts`，具体接口需结合 `docs/ku-go-api-docs.md` 和 `skills/kugou-provider-alignment`。
 - `qqProvider.ts`：QQ 音乐 adapter；请求与 opaque session 细节在 `qqTransport.ts`，归一化在 `qqNormalize.ts`。集合身份一律用 mid，数字 `albumid` / `singer.id` 会被上游拒收（返回 HTTP 200 但 `code` 非 0，只表现成空白页）。后端由 `VITE_QQ_API_BASE` 指向的私有 QQ API 提供，未配置时该 provider 不可用；填相对路径（`/api/qq`）时走的是本仓库内置的 serverless 入口（`worker/qq.ts` / `api-ts/qq.ts`）。扫码通道由后端 `/login/channels` 声明；打开登录时 UI 会等待能力发现并使用同一份结果决定流程，只宣告一个通道时直接进入单步流程。旧后端没有这条路由时回落到硬编码的 `qq` / `wechat` 两条，暂时性探测失败允许后续重试。
 - `providerAccountCache.ts`：按 provider 保存用户、集合、点赞 ID、hydration/freshness 快照；刷新失败保留旧快照。

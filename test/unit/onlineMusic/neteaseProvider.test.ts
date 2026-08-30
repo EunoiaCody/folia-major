@@ -19,6 +19,8 @@ vi.mock('@/services/netease', () => ({
         getArtistAlbums: vi.fn(),
         getPersonalizedPlaylists: vi.fn(),
         checkQr: vi.fn(),
+        sendLoginCaptcha: vi.fn(),
+        loginByPhoneCaptcha: vi.fn(),
     },
 }));
 
@@ -270,5 +272,44 @@ describe('neteaseProvider', () => {
             .mockRejectedValueOnce(new Error('backend unblock unsupported'));
 
         await expect(neteaseProvider.playback!.getAudioSource(song, 'high', { allowUnlock: true })).resolves.toBeNull();
+    });
+
+    it('normalizes captcha send success', async () => {
+        vi.mocked(neteaseApi.sendLoginCaptcha).mockResolvedValue({ code: 200 } as any);
+
+        await expect(neteaseProvider.auth!.sendLoginCaptcha!('13800138000')).resolves.toEqual({ ok: true, error: undefined });
+        expect(neteaseApi.sendLoginCaptcha).toHaveBeenCalledWith('13800138000');
+    });
+
+    it('normalizes captcha send failure and surfaces the server message', async () => {
+        vi.mocked(neteaseApi.sendLoginCaptcha).mockResolvedValue({ code: 503, message: '操作频繁' } as any);
+
+        await expect(neteaseProvider.auth!.sendLoginCaptcha!('13800138000')).resolves.toEqual({ ok: false, error: '操作频繁' });
+    });
+
+    it('logs in with phone + captcha and returns the normalized user', async () => {
+        vi.mocked(neteaseApi.loginByPhoneCaptcha).mockResolvedValue({
+            code: 200,
+            cookie: 'MUSIC_U=abc; __csrf=123',
+            profile: { userId: 99, nickname: '歌者', avatarUrl: 'http://p1.music.126.net/avatar.jpg', vipType: 11 },
+        } as any);
+
+        await expect(neteaseProvider.auth!.loginByPhoneCaptcha!('13800138000', '123456')).resolves.toMatchObject({
+            id: 99,
+            nickname: '歌者',
+            vipType: 11,
+        });
+    });
+
+    it('throws a provider error with the server message when the captcha is wrong', async () => {
+        vi.mocked(neteaseApi.loginByPhoneCaptcha).mockResolvedValue({ code: 400, message: '验证码错误' } as any);
+
+        await expect(neteaseProvider.auth!.loginByPhoneCaptcha!('13800138000', '000000')).rejects.toThrow('验证码错误');
+    });
+
+    it('throws when the login response carries no profile', async () => {
+        vi.mocked(neteaseApi.loginByPhoneCaptcha).mockResolvedValue({ code: 200, cookie: '' } as any);
+
+        await expect(neteaseProvider.auth!.loginByPhoneCaptcha!('13800138000', '123456')).rejects.toThrow();
     });
 });

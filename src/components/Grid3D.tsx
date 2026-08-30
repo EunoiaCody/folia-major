@@ -19,6 +19,7 @@ import { importFolder, resyncAllFolders, LOCAL_MUSIC_SCAN_PROGRESS_EVENT } from 
 import { getLocalLibraryAvailability } from '../services/localLibraryAvailability';
 import { importLocalPlaylistFile } from '../services/localPlaylistFileService';
 import { useOnlineProviderQrLogin } from '../hooks/useOnlineProviderQrLogin';
+import { useOnlineProviderPhoneLogin } from '../hooks/useOnlineProviderPhoneLogin';
 import type { OnlineProviderPlatformState } from '../hooks/useOnlineProviderPlatform';
 import { omni } from '../services/onlineMusic/omni';
 import { getPersonalFmSelectionLabel } from '../services/onlineMusic/fmModes';
@@ -313,6 +314,32 @@ export const Grid3D: React.FC<Grid3DProps> = (props) => {
             }
         },
     });
+    // 手机号短信验证码登录（provider 声明能力才启用；netease 支持，kugou/qq 自动隐藏）。
+    const canPhoneLogin = omni.canPhoneCaptchaLogin(loginProviderId);
+    const {
+        phone,
+        setPhone,
+        captcha,
+        setCaptcha,
+        sending: phoneSending,
+        submitting: phoneSubmitting,
+        countdown: phoneCountdown,
+        error: phoneError,
+        sendCaptcha: sendPhoneCaptcha,
+        submit: submitPhoneLogin,
+        reset: resetPhoneLogin,
+    } = useOnlineProviderPhoneLogin({
+        providerId: loginProviderId,
+        t,
+        onConfirmed: async (confirmedProviderId) => {
+            setShowLoginModal(false);
+            if (onlineProviderPlatform) {
+                await onlineProviderPlatform.completeLogin(confirmedProviderId);
+            } else {
+                onRefreshUser();
+            }
+        },
+    });
 
     const initLogin = async (providerId = activeProviderId) => {
         const summary = onlineProviderPlatform?.providers.find(provider => provider.providerId === providerId);
@@ -325,6 +352,7 @@ export const Grid3D: React.FC<Grid3DProps> = (props) => {
         setLoginMethodOptions(methods);
         setShowLoginModal(true);
         setSelectedLoginMethodId(null);
+        resetPhoneLogin();
         // 有多种登录方式时先停在步骤一，选定之前不向后端要二维码。
         if (methods.length > 0) return;
         await startQrLogin(providerId);
@@ -943,9 +971,31 @@ export const Grid3D: React.FC<Grid3DProps> = (props) => {
                             : undefined}
                         // 刷新时保留已选的登录方式，否则用户会被踢回步骤一。
                         onRetry={() => void startQrLogin(loginProviderId, selectedLoginMethodId ?? undefined)}
+                        phoneLogin={canPhoneLogin ? {
+                            qrTabLabel: t('home.phoneLoginQrTab'),
+                            phoneTabLabel: t('home.phoneLoginSwitch'),
+                            desc: t('home.phoneLoginDesc'),
+                            phoneLabel: t('home.phoneNumber'),
+                            captchaLabel: t('home.captchaCode'),
+                            sendLabel: t('home.sendCaptcha'),
+                            sendCountdownLabel: t('home.sendCaptchaCountdown'),
+                            loginLabel: t('home.phoneLogin'),
+                            loggingInLabel: t('home.phoneLoggingIn'),
+                            phone,
+                            captcha,
+                            sending: phoneSending,
+                            submitting: phoneSubmitting,
+                            countdown: phoneCountdown,
+                            errorText: phoneError,
+                            onPhoneChange: setPhone,
+                            onCaptchaChange: setCaptcha,
+                            onSend: () => void sendPhoneCaptcha(),
+                            onSubmit: () => void submitPhoneLogin(),
+                        } : undefined}
                         onClose={() => {
                             setShowLoginModal(false);
                             stopQrLogin();
+                            resetPhoneLogin();
                         }}
                     />
                 )}

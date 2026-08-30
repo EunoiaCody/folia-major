@@ -1,5 +1,6 @@
 import { Check, Loader2, RotateCcw, X } from 'lucide-react';
 import { motion } from 'framer-motion';
+import { useState } from 'react';
 
 // src/components/app/home/OnlineProviderLoginModal.tsx
 
@@ -15,6 +16,30 @@ type LoginMethodsProps = {
     onSelect: (id: string) => void;
 };
 
+// 手机号短信验证码登录表单（可选能力）。provider 声明 supportsPhoneCaptchaLogin 后，
+// 调用方传入本组 props，弹窗顶部出现「扫码登录 / 手机号登录」切换；否则完全不渲染。
+type PhoneLoginProps = {
+    qrTabLabel: string;
+    phoneTabLabel: string;
+    desc: string;
+    phoneLabel: string;
+    captchaLabel: string;
+    sendLabel: string;
+    sendCountdownLabel: string; // 含 {seconds} 占位符的倒计时文案
+    loginLabel: string;
+    loggingInLabel: string;
+    phone: string;
+    captcha: string;
+    sending: boolean;
+    submitting: boolean;
+    countdown: number;
+    errorText: string | null;
+    onPhoneChange: (value: string) => void;
+    onCaptchaChange: (value: string) => void;
+    onSend: () => void;
+    onSubmit: () => void;
+};
+
 type OnlineProviderLoginModalProps = {
     title: string;
     note: string;
@@ -24,9 +49,12 @@ type OnlineProviderLoginModalProps = {
     retryLabel: string;
     closeLabel: string;
     loginMethods?: LoginMethodsProps;
+    phoneLogin?: PhoneLoginProps;
     onRetry: () => void;
     onClose: () => void;
 };
+
+const inputClass = 'w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2.5 text-sm text-white placeholder-white/30 focus:outline-none focus:border-white/25 transition-colors';
 
 const OnlineProviderLoginModal = ({
     title,
@@ -37,12 +65,18 @@ const OnlineProviderLoginModal = ({
     retryLabel,
     closeLabel,
     loginMethods,
+    phoneLogin,
     onRetry,
     onClose,
 }: OnlineProviderLoginModalProps) => {
+    const [mode, setMode] = useState<'qr' | 'phone'>('qr');
     // 步骤一：还没选登录方式，二维码区显示占位框，且不会向后端发出任何请求。
     const awaitingMethod = Boolean(loginMethods) && loginMethods?.selectedId == null;
     const canRetry = (state === 'expired' || state === 'error') && !awaitingMethod;
+    const phoneMode = phoneLogin != null && mode === 'phone';
+    const countdownText = phoneLogin
+        ? phoneLogin.sendCountdownLabel.replace('{seconds}', String(phoneLogin.countdown))
+        : '';
     return (
         <motion.div
             initial={{ opacity: 0 }}
@@ -71,7 +105,25 @@ const OnlineProviderLoginModal = ({
                     <X size={16} />
                 </button>
                 <h3 className="text-lg font-bold mb-6" style={{ color: 'var(--text-primary)' }}>{title}</h3>
-                {loginMethods && (
+                {phoneLogin && (
+                    <div className="mb-5 inline-flex rounded-full bg-white/5 border border-white/10 p-1 text-xs font-semibold">
+                        <button
+                            type="button"
+                            onClick={() => setMode('qr')}
+                            className={`px-4 py-1.5 rounded-full transition-colors cursor-pointer ${mode === 'qr' ? 'bg-white/15 text-white' : 'text-white/50 hover:text-white/80'}`}
+                        >
+                            {phoneLogin.qrTabLabel}
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => setMode('phone')}
+                            className={`px-4 py-1.5 rounded-full transition-colors cursor-pointer ${mode === 'phone' ? 'bg-white/15 text-white' : 'text-white/50 hover:text-white/80'}`}
+                        >
+                            {phoneLogin.phoneTabLabel}
+                        </button>
+                    </div>
+                )}
+                {!phoneMode && loginMethods && (
                     <div className="mb-5">
                         <p className="text-[10px] font-semibold uppercase tracking-[0.16em] opacity-45 mb-1.5" style={{ color: 'var(--text-secondary)' }}>
                             {loginMethods.title}
@@ -105,33 +157,106 @@ const OnlineProviderLoginModal = ({
                         </div>
                     </div>
                 )}
-                <div className="relative inline-block bg-white p-2 rounded-xl mb-4 shadow-inner">
-                    {awaitingMethod ? (
-                        <div className="w-40 h-40 flex items-center justify-center rounded-lg border-2 border-dashed border-gray-300 px-4 text-center text-[11px] font-medium leading-snug text-gray-400">
-                            {loginMethods?.pendingText}
+                {phoneMode && phoneLogin ? (
+                    <div className="space-y-3 text-left">
+                        <p className="text-[11px] leading-snug opacity-55 text-center" style={{ color: 'var(--text-secondary)' }}>
+                            {phoneLogin.desc}
+                        </p>
+                        <div>
+                            <label className="block text-[10px] font-semibold uppercase tracking-[0.14em] opacity-45 mb-1.5" style={{ color: 'var(--text-secondary)' }}>
+                                {phoneLogin.phoneLabel}
+                            </label>
+                            <input
+                                type="tel"
+                                inputMode="numeric"
+                                autoComplete="tel"
+                                maxLength={11}
+                                value={phoneLogin.phone}
+                                onChange={event => phoneLogin.onPhoneChange(event.target.value.replace(/\D/g, ''))}
+                                className={inputClass}
+                                placeholder="13800138000"
+                            />
                         </div>
-                    ) : qrCodeImg ? (
-                        <img src={qrCodeImg} alt="QR Code" className="w-40 h-40" />
-                    ) : (
-                        <div className="w-40 h-40 flex items-center justify-center bg-gray-100 rounded-lg">
-                            <Loader2 className="animate-spin text-gray-400" size={24} />
+                        <div>
+                            <label className="block text-[10px] font-semibold uppercase tracking-[0.14em] opacity-45 mb-1.5" style={{ color: 'var(--text-secondary)' }}>
+                                {phoneLogin.captchaLabel}
+                            </label>
+                            <div className="flex items-center gap-2">
+                                <input
+                                    type="text"
+                                    inputMode="numeric"
+                                    autoComplete="one-time-code"
+                                    maxLength={6}
+                                    value={phoneLogin.captcha}
+                                    onChange={event => phoneLogin.onCaptchaChange(event.target.value.replace(/\D/g, ''))}
+                                    className={inputClass}
+                                />
+                                <button
+                                    type="button"
+                                    onClick={phoneLogin.onSend}
+                                    disabled={phoneLogin.sending || phoneLogin.countdown > 0}
+                                    className="shrink-0 rounded-xl border border-white/10 bg-white/5 px-3 py-2.5 text-xs font-semibold text-white/70 hover:bg-white/10 disabled:opacity-40 transition-colors cursor-pointer"
+                                >
+                                    {phoneLogin.sending ? (
+                                        <Loader2 className="animate-spin" size={13} />
+                                    ) : phoneLogin.countdown > 0 ? (
+                                        countdownText
+                                    ) : (
+                                        phoneLogin.sendLabel
+                                    )}
+                                </button>
+                            </div>
                         </div>
-                    )}
-                </div>
-                {loginMethods && !awaitingMethod && (
-                    <p className="text-[11px] font-medium opacity-45" style={{ color: 'var(--text-secondary)' }}>
-                        {loginMethods.currentText}
-                    </p>
-                )}
-                {/* 步骤一不显示状态文案：关窗重开时 hook 里还留着上一轮的状态，照原样显示会是过期信息。 */}
-                <p className={`text-xs font-medium mt-2 ${state === 'confirmed' ? 'text-green-400' : 'opacity-60'}`} style={{ color: state === 'confirmed' ? undefined : 'var(--text-secondary)' }}>
-                    {awaitingMethod ? '' : statusText}
-                </p>
-                {canRetry && (
-                    <button type="button" onClick={onRetry} className="inline-flex items-center gap-1.5 mt-4 px-4 py-2 rounded-full bg-white/10 hover:bg-white/15 text-xs font-semibold transition-colors">
-                        <RotateCcw size={13} />
-                        {retryLabel}
-                    </button>
+                        {phoneLogin.errorText && (
+                            <p className="text-xs text-red-400 leading-snug text-center">{phoneLogin.errorText}</p>
+                        )}
+                        <button
+                            type="button"
+                            onClick={phoneLogin.onSubmit}
+                            disabled={phoneLogin.submitting}
+                            className="w-full rounded-xl bg-white/10 hover:bg-white/15 py-2.5 text-sm font-semibold transition-colors disabled:opacity-50 inline-flex items-center justify-center gap-2 cursor-pointer"
+                        >
+                            {phoneLogin.submitting ? (
+                                <>
+                                    <Loader2 className="animate-spin" size={14} />
+                                    {phoneLogin.loggingInLabel}
+                                </>
+                            ) : (
+                                phoneLogin.loginLabel
+                            )}
+                        </button>
+                    </div>
+                ) : (
+                    <>
+                        <div className="relative inline-block bg-white p-2 rounded-xl mb-4 shadow-inner">
+                            {awaitingMethod ? (
+                                <div className="w-40 h-40 flex items-center justify-center rounded-lg border-2 border-dashed border-gray-300 px-4 text-center text-[11px] font-medium leading-snug text-gray-400">
+                                    {loginMethods?.pendingText}
+                                </div>
+                            ) : qrCodeImg ? (
+                                <img src={qrCodeImg} alt="QR Code" className="w-40 h-40" />
+                            ) : (
+                                <div className="w-40 h-40 flex items-center justify-center bg-gray-100 rounded-lg">
+                                    <Loader2 className="animate-spin text-gray-400" size={24} />
+                                </div>
+                            )}
+                        </div>
+                        {loginMethods && !awaitingMethod && (
+                            <p className="text-[11px] font-medium opacity-45" style={{ color: 'var(--text-secondary)' }}>
+                                {loginMethods.currentText}
+                            </p>
+                        )}
+                        {/* 步骤一不显示状态文案：关窗重开时 hook 里还留着上一轮的状态，照原样显示会是过期信息。 */}
+                        <p className={`text-xs font-medium mt-2 ${state === 'confirmed' ? 'text-green-400' : 'opacity-60'}`} style={{ color: state === 'confirmed' ? undefined : 'var(--text-secondary)' }}>
+                            {awaitingMethod ? '' : statusText}
+                        </p>
+                        {canRetry && (
+                            <button type="button" onClick={onRetry} className="inline-flex items-center gap-1.5 mt-4 px-4 py-2 rounded-full bg-white/10 hover:bg-white/15 text-xs font-semibold transition-colors">
+                                <RotateCcw size={13} />
+                                {retryLabel}
+                            </button>
+                        )}
+                    </>
                 )}
                 <p className="text-[10px] opacity-30 mt-6" style={{ color: 'var(--text-secondary)' }}>{note}</p>
             </motion.div>

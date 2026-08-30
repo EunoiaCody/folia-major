@@ -301,4 +301,39 @@ describe('omni routing', () => {
         })).rejects.toMatchObject({ code: 'unsupported' });
         expect(updateTracks).not.toHaveBeenCalled();
     });
+
+    it('routes phone captcha login through the provider-explicit auth methods', async () => {
+        const sendCaptcha = vi.fn(async () => ({ ok: true }));
+        const loginByCaptcha = vi.fn(async (phone: string, captcha: string) => ({
+            id: 1,
+            nickname: `user-${phone}-${captcha}`,
+        }));
+        registerOnlineMusicProvider({
+            ...provider(providerId, { searchSongs: async () => ({ items: [], hasMore: false, nextOffset: 0 }) }),
+            capabilities: { ...capabilities, auth: true },
+            auth: {
+                getLoginStatus: async () => null,
+                logout: async () => undefined,
+                supportsPhoneCaptchaLogin: () => true,
+                sendLoginCaptcha: sendCaptcha,
+                loginByPhoneCaptcha: loginByCaptcha,
+            },
+        });
+
+        expect(omni.canPhoneCaptchaLogin(providerId)).toBe(true);
+        await expect(omni.sendLoginCaptcha(providerId, '13800138000')).resolves.toEqual({ ok: true });
+        await expect(omni.loginByPhoneCaptcha(providerId, '13800138000', '123456')).resolves.toMatchObject({
+            nickname: 'user-13800138000-123456',
+        });
+        expect(sendCaptcha).toHaveBeenCalledWith('13800138000');
+        expect(loginByCaptcha).toHaveBeenCalledWith('13800138000', '123456');
+    });
+
+    it('reports providers without the capability as not supporting phone login', async () => {
+        registerOnlineMusicProvider(provider(providerId, { searchSongs: async () => ({ items: [], hasMore: false, nextOffset: 0 }) }));
+
+        expect(omni.canPhoneCaptchaLogin(providerId)).toBe(false);
+        await expect(omni.sendLoginCaptcha(providerId, '13800138000')).rejects.toMatchObject({ code: 'unsupported' });
+        await expect(omni.loginByPhoneCaptcha(providerId, '13800138000', '123456')).rejects.toMatchObject({ code: 'unsupported' });
+    });
 });

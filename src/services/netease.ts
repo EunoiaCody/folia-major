@@ -519,6 +519,22 @@ export const neteaseApi = {
     return fetchWithCreds(`/login/qr/check?key=${key}`);
   },
 
+  // 手机号短信验证码登录（增强 API 服务：Electron 内置 / Vercel 部署均含 captcha_sent、login_cellphone 模块）
+  sendLoginCaptcha: async (phone: string) => {
+    return fetchWithCreds(`/captcha/sent?phone=${encodeURIComponent(phone)}`);
+  },
+
+  loginByPhoneCaptcha: async (phone: string, captcha: string) => {
+    const res = await fetchWithCreds(`/login/cellphone?phone=${encodeURIComponent(phone)}&captcha=${encodeURIComponent(captcha)}`);
+    // 与扫码登录 803 一致：登录响应携带的 cookie（含 MUSIC_U）即登录态，写入 provider session。
+    // 响应结构兼容 data.profile（xeapi 包装）与顶层 profile 两种形态。
+    const profile = res?.data?.profile ?? res?.profile;
+    if (res?.code === 200 && profile && typeof res?.cookie === 'string' && res.cookie) {
+      writeProviderSessionValue('netease', 'cookie', res.cookie);
+    }
+    return res;
+  },
+
   getLoginStatus: async () => {
     const res = await fetchWithCreds(`/login/status`);
     if (res.data?.profile) {

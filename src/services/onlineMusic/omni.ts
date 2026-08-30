@@ -17,6 +17,7 @@ import type {
     OmniUser,
     OnlineMusicProvider,
     PersonalFmRequestOptions,
+    PhoneCaptchaSendResult,
     ProviderCatalogEntityKind,
     QrLoginMethod,
     QrLoginState,
@@ -208,6 +209,24 @@ export const omni = {
     getQrTtlMs(providerId: OmniProviderId): number | null {
         const ttlMs = requireOnlineMusicProvider(providerId).auth?.getQrTtlMs?.();
         return typeof ttlMs === 'number' && ttlMs > 0 ? ttlMs : null;
+    },
+
+    // ---- 手机号短信验证码登录（provider-explicit，仅声明该能力的 provider 可用） ----
+    canPhoneCaptchaLogin(providerId: OmniProviderId): boolean {
+        const auth = requireOnlineMusicProvider(providerId).auth;
+        return Boolean(auth?.supportsPhoneCaptchaLogin?.() && auth?.sendLoginCaptcha && auth?.loginByPhoneCaptcha);
+    },
+
+    async sendLoginCaptcha(providerId: OmniProviderId, phone: string): Promise<PhoneCaptchaSendResult> {
+        const auth = requireOnlineMusicProvider(providerId).auth;
+        if (!auth?.sendLoginCaptcha) return unsupported(providerId, 'phone-captcha-login');
+        return auth.sendLoginCaptcha(phone);
+    },
+
+    async loginByPhoneCaptcha(providerId: OmniProviderId, phone: string, captcha: string): Promise<OmniUser> {
+        const auth = requireOnlineMusicProvider(providerId).auth;
+        if (!auth?.loginByPhoneCaptcha) return unsupported(providerId, 'phone-captcha-login');
+        return auth.loginByPhoneCaptcha(phone, captcha);
     },
 
     async getUserPlaylists(userId: MediaId, page: PageInput): Promise<OmniPage<OmniCollection>> {
