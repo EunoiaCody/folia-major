@@ -22,6 +22,7 @@ vi.mock('@/services/netease', () => ({
         sendLoginCaptcha: vi.fn(),
         verifyLoginCaptcha: vi.fn(),
         loginByPhoneCaptcha: vi.fn(),
+        loginByCookie: vi.fn(),
     },
 }));
 
@@ -324,5 +325,29 @@ describe('neteaseProvider', () => {
         vi.mocked(neteaseApi.loginByPhoneCaptcha).mockResolvedValue({ code: 200, cookie: '' } as any);
 
         await expect(neteaseProvider.auth!.loginByPhoneCaptcha!('13800138000', '123456')).rejects.toThrow();
+    });
+
+    it('logs in with a pasted cookie and returns the normalized user', async () => {
+        vi.mocked(neteaseApi.loginByCookie).mockResolvedValue({
+            code: 200,
+            data: { profile: { userId: 77, nickname: 'CookieUser', avatarUrl: 'http://p1.music.126.net/a.jpg' } },
+        } as any);
+
+        await expect(neteaseProvider.auth!.loginByCookie!('MUSIC_U=abc; __csrf=1')).resolves.toMatchObject({
+            id: 77,
+            nickname: 'CookieUser',
+        });
+        expect(neteaseApi.loginByCookie).toHaveBeenCalledWith('MUSIC_U=abc; __csrf=1');
+    });
+
+    it('throws with the server message when the cookie is rejected', async () => {
+        vi.mocked(neteaseApi.loginByCookie).mockResolvedValue({ code: 400, message: '登录信息已过期' } as any);
+
+        await expect(neteaseProvider.auth!.loginByCookie!('MUSIC_U=expired')).rejects.toThrow('登录信息已过期');
+    });
+
+    it('rejects an empty cookie without calling the backend', async () => {
+        await expect(neteaseProvider.auth!.loginByCookie!('   ')).rejects.toThrow('cookie is empty');
+        expect(neteaseApi.loginByCookie).not.toHaveBeenCalled();
     });
 });

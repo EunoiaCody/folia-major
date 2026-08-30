@@ -540,6 +540,24 @@ export const neteaseApi = {
     return res;
   },
 
+  // Cookie 登录：先把用户提供的 cookie 写入 session，再调 /login/status 校验并取 profile。
+  // 之所以先写 session 而不是显式带 ?cookie=，是避免 fetchWithCreds 在无会话时追加匿名 cookie
+  // 造成重复 cookie 参数；校验失败会回滚清除 session。
+  loginByCookie: async (cookie: string) => {
+    writeProviderSessionValue('netease', 'cookie', cookie);
+    try {
+      const res = await fetchWithCreds(`/login/status`);
+      if (res?.code === 200 && res?.data?.profile) {
+        return res;
+      }
+      removeProviderSessionValue('netease', 'cookie', ['netease_cookie']);
+      return res;
+    } catch (error) {
+      removeProviderSessionValue('netease', 'cookie', ['netease_cookie']);
+      throw error;
+    }
+  },
+
   getLoginStatus: async () => {
     const res = await fetchWithCreds(`/login/status`);
     if (res.data?.profile) {

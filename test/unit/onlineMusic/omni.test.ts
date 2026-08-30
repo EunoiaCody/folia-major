@@ -336,4 +336,28 @@ describe('omni routing', () => {
         await expect(omni.sendLoginCaptcha(providerId, '13800138000')).rejects.toMatchObject({ code: 'unsupported' });
         await expect(omni.loginByPhoneCaptcha(providerId, '13800138000', '123456')).rejects.toMatchObject({ code: 'unsupported' });
     });
+
+    it('routes cookie login through the provider-explicit auth method', async () => {
+        const loginByCookie = vi.fn(async (cookie: string) => ({ id: 5, nickname: `user-${cookie.length}` }));
+        registerOnlineMusicProvider({
+            ...provider(providerId, { searchSongs: async () => ({ items: [], hasMore: false, nextOffset: 0 }) }),
+            capabilities: { ...capabilities, auth: true },
+            auth: {
+                getLoginStatus: async () => null,
+                logout: async () => undefined,
+                loginByCookie,
+            },
+        });
+
+        expect(omni.canCookieLogin(providerId)).toBe(true);
+        await expect(omni.loginByCookie(providerId, 'MUSIC_U=abc')).resolves.toMatchObject({ nickname: 'user-11' });
+        expect(loginByCookie).toHaveBeenCalledWith('MUSIC_U=abc');
+    });
+
+    it('reports cookie login as unsupported when the provider lacks the method', async () => {
+        registerOnlineMusicProvider(provider(providerId, { searchSongs: async () => ({ items: [], hasMore: false, nextOffset: 0 }) }));
+
+        expect(omni.canCookieLogin(providerId)).toBe(false);
+        await expect(omni.loginByCookie(providerId, 'MUSIC_U=abc')).rejects.toMatchObject({ code: 'unsupported' });
+    });
 });

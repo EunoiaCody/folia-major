@@ -229,6 +229,17 @@ export const omni = {
         return auth.loginByPhoneCaptcha(phone, captcha);
     },
 
+    // ---- Cookie 登录（provider-explicit，仅声明该能力的 provider 可用） ----
+    canCookieLogin(providerId: OmniProviderId): boolean {
+        return Boolean(requireOnlineMusicProvider(providerId).auth?.loginByCookie);
+    },
+
+    async loginByCookie(providerId: OmniProviderId, cookie: string): Promise<OmniUser> {
+        const auth = requireOnlineMusicProvider(providerId).auth;
+        if (!auth?.loginByCookie) return unsupported(providerId, 'cookie-login');
+        return auth.loginByCookie(cookie);
+    },
+
     async getUserPlaylists(userId: MediaId, page: PageInput): Promise<OmniPage<OmniCollection>> {
         return withActiveProvider(async provider => provider.library?.getUserPlaylists?.(userId, page.limit, page.offset) ?? emptyPage(page.offset));
     },

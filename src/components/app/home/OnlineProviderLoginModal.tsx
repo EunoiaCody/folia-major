@@ -40,6 +40,23 @@ type PhoneLoginProps = {
     onSubmit: () => void;
 };
 
+// Cookie 登录（可选能力）。netease 声明 loginByCookie 后传入；
+// 用户粘贴网易云登录 cookie 直接校验，不受验证码登录 IP 风控限制。
+type CookieLoginProps = {
+    qrTabLabel: string;
+    cookieTabLabel: string;
+    desc: string;
+    cookieLabel: string;
+    cookiePlaceholder: string;
+    loginLabel: string;
+    loggingInLabel: string;
+    cookie: string;
+    submitting: boolean;
+    errorText: string | null;
+    onCookieChange: (value: string) => void;
+    onSubmit: () => void;
+};
+
 type OnlineProviderLoginModalProps = {
     title: string;
     note: string;
@@ -50,6 +67,7 @@ type OnlineProviderLoginModalProps = {
     closeLabel: string;
     loginMethods?: LoginMethodsProps;
     phoneLogin?: PhoneLoginProps;
+    cookieLogin?: CookieLoginProps;
     onRetry: () => void;
     onClose: () => void;
 };
@@ -66,14 +84,17 @@ const OnlineProviderLoginModal = ({
     closeLabel,
     loginMethods,
     phoneLogin,
+    cookieLogin,
     onRetry,
     onClose,
 }: OnlineProviderLoginModalProps) => {
-    const [mode, setMode] = useState<'qr' | 'phone'>('qr');
+    const [mode, setMode] = useState<'qr' | 'phone' | 'cookie'>('qr');
     // 步骤一：还没选登录方式，二维码区显示占位框，且不会向后端发出任何请求。
     const awaitingMethod = Boolean(loginMethods) && loginMethods?.selectedId == null;
     const canRetry = (state === 'expired' || state === 'error') && !awaitingMethod;
     const phoneMode = phoneLogin != null && mode === 'phone';
+    const cookieMode = cookieLogin != null && mode === 'cookie';
+    const showTabs = phoneLogin != null || cookieLogin != null;
     const countdownText = phoneLogin
         ? phoneLogin.sendCountdownLabel.replace('{seconds}', String(phoneLogin.countdown))
         : '';
@@ -105,22 +126,33 @@ const OnlineProviderLoginModal = ({
                     <X size={16} />
                 </button>
                 <h3 className="text-lg font-bold mb-6" style={{ color: 'var(--text-primary)' }}>{title}</h3>
-                {phoneLogin && (
+                {showTabs && (
                     <div className="mb-5 inline-flex rounded-full bg-white/5 border border-white/10 p-1 text-xs font-semibold">
                         <button
                             type="button"
                             onClick={() => setMode('qr')}
                             className={`px-4 py-1.5 rounded-full transition-colors cursor-pointer ${mode === 'qr' ? 'bg-white/15 text-white' : 'text-white/50 hover:text-white/80'}`}
                         >
-                            {phoneLogin.qrTabLabel}
+                            {phoneLogin?.qrTabLabel ?? cookieLogin?.qrTabLabel ?? ''}
                         </button>
-                        <button
-                            type="button"
-                            onClick={() => setMode('phone')}
-                            className={`px-4 py-1.5 rounded-full transition-colors cursor-pointer ${mode === 'phone' ? 'bg-white/15 text-white' : 'text-white/50 hover:text-white/80'}`}
-                        >
-                            {phoneLogin.phoneTabLabel}
-                        </button>
+                        {phoneLogin && (
+                            <button
+                                type="button"
+                                onClick={() => setMode('phone')}
+                                className={`px-4 py-1.5 rounded-full transition-colors cursor-pointer ${mode === 'phone' ? 'bg-white/15 text-white' : 'text-white/50 hover:text-white/80'}`}
+                            >
+                                {phoneLogin.phoneTabLabel}
+                            </button>
+                        )}
+                        {cookieLogin && (
+                            <button
+                                type="button"
+                                onClick={() => setMode('cookie')}
+                                className={`px-4 py-1.5 rounded-full transition-colors cursor-pointer ${mode === 'cookie' ? 'bg-white/15 text-white' : 'text-white/50 hover:text-white/80'}`}
+                            >
+                                {cookieLogin.cookieTabLabel}
+                            </button>
+                        )}
                     </div>
                 )}
                 {!phoneMode && loginMethods && (
@@ -223,6 +255,43 @@ const OnlineProviderLoginModal = ({
                                 </>
                             ) : (
                                 phoneLogin.loginLabel
+                            )}
+                        </button>
+                    </div>
+                ) : cookieMode && cookieLogin ? (
+                    <div className="space-y-3 text-left">
+                        <p className="text-[11px] leading-snug opacity-55 text-center" style={{ color: 'var(--text-secondary)' }}>
+                            {cookieLogin.desc}
+                        </p>
+                        <div>
+                            <label className="block text-[10px] font-semibold uppercase tracking-[0.14em] opacity-45 mb-1.5" style={{ color: 'var(--text-secondary)' }}>
+                                {cookieLogin.cookieLabel}
+                            </label>
+                            <textarea
+                                value={cookieLogin.cookie}
+                                onChange={event => cookieLogin.onCookieChange(event.target.value)}
+                                rows={4}
+                                spellCheck={false}
+                                className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2.5 text-xs text-white placeholder-white/30 focus:outline-none focus:border-white/25 transition-colors resize-none leading-relaxed"
+                                placeholder={cookieLogin.cookiePlaceholder}
+                            />
+                        </div>
+                        {cookieLogin.errorText && (
+                            <p className="text-xs text-red-400 leading-snug text-center">{cookieLogin.errorText}</p>
+                        )}
+                        <button
+                            type="button"
+                            onClick={cookieLogin.onSubmit}
+                            disabled={cookieLogin.submitting}
+                            className="w-full rounded-xl bg-white/10 hover:bg-white/15 py-2.5 text-sm font-semibold transition-colors disabled:opacity-50 inline-flex items-center justify-center gap-2 cursor-pointer"
+                        >
+                            {cookieLogin.submitting ? (
+                                <>
+                                    <Loader2 className="animate-spin" size={14} />
+                                    {cookieLogin.loggingInLabel}
+                                </>
+                            ) : (
+                                cookieLogin.loginLabel
                             )}
                         </button>
                     </div>

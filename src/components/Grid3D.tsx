@@ -20,6 +20,7 @@ import { getLocalLibraryAvailability } from '../services/localLibraryAvailabilit
 import { importLocalPlaylistFile } from '../services/localPlaylistFileService';
 import { useOnlineProviderQrLogin } from '../hooks/useOnlineProviderQrLogin';
 import { useOnlineProviderPhoneLogin } from '../hooks/useOnlineProviderPhoneLogin';
+import { useOnlineProviderCookieLogin } from '../hooks/useOnlineProviderCookieLogin';
 import type { OnlineProviderPlatformState } from '../hooks/useOnlineProviderPlatform';
 import { omni } from '../services/onlineMusic/omni';
 import { getPersonalFmSelectionLabel } from '../services/onlineMusic/fmModes';
@@ -340,6 +341,27 @@ export const Grid3D: React.FC<Grid3DProps> = (props) => {
             }
         },
     });
+    // Cookie 登录（provider 声明 loginByCookie 才启用；不受验证码 IP 风控限制）。
+    const canCookieLogin = omni.canCookieLogin(loginProviderId);
+    const {
+        cookie,
+        setCookie,
+        submitting: cookieSubmitting,
+        error: cookieError,
+        submit: submitCookieLogin,
+        reset: resetCookieLogin,
+    } = useOnlineProviderCookieLogin({
+        providerId: loginProviderId,
+        t,
+        onConfirmed: async (confirmedProviderId) => {
+            setShowLoginModal(false);
+            if (onlineProviderPlatform) {
+                await onlineProviderPlatform.completeLogin(confirmedProviderId);
+            } else {
+                onRefreshUser();
+            }
+        },
+    });
 
     const initLogin = async (providerId = activeProviderId) => {
         const summary = onlineProviderPlatform?.providers.find(provider => provider.providerId === providerId);
@@ -353,6 +375,7 @@ export const Grid3D: React.FC<Grid3DProps> = (props) => {
         setShowLoginModal(true);
         setSelectedLoginMethodId(null);
         resetPhoneLogin();
+        resetCookieLogin();
         // 有多种登录方式时先停在步骤一，选定之前不向后端要二维码。
         if (methods.length > 0) return;
         await startQrLogin(providerId);
@@ -992,10 +1015,25 @@ export const Grid3D: React.FC<Grid3DProps> = (props) => {
                             onSend: () => void sendPhoneCaptcha(),
                             onSubmit: () => void submitPhoneLogin(),
                         } : undefined}
+                        cookieLogin={canCookieLogin ? {
+                            qrTabLabel: t('home.phoneLoginQrTab'),
+                            cookieTabLabel: t('home.cookieLoginSwitch'),
+                            desc: t('home.cookieLoginDesc'),
+                            cookieLabel: t('home.cookieLoginValue'),
+                            cookiePlaceholder: t('home.cookieLoginPlaceholder'),
+                            loginLabel: t('home.cookieLogin'),
+                            loggingInLabel: t('home.cookieLoggingIn'),
+                            cookie,
+                            submitting: cookieSubmitting,
+                            errorText: cookieError,
+                            onCookieChange: setCookie,
+                            onSubmit: () => void submitCookieLogin(),
+                        } : undefined}
                         onClose={() => {
                             setShowLoginModal(false);
                             stopQrLogin();
                             resetPhoneLogin();
+                            resetCookieLogin();
                         }}
                     />
                 )}

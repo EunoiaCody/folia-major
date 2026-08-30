@@ -261,6 +261,10 @@ export interface OnlineAuthProvider {
     sendLoginCaptcha?(phone: string): Promise<PhoneCaptchaSendResult>;
     /** 用验证码完成登录；成功返回用户（并已写入 provider session cookie）。 */
     loginByPhoneCaptcha?(phone: string, captcha: string): Promise<ProviderUser>;
+    // ---- Cookie 登录（可选能力） ----
+    // 用户从其他客户端/浏览器复制网易云登录 cookie 粘贴登录；
+    // 不受验证码登录的 IP 风控限制。实现负责校验 cookie 并写入 provider session。
+    loginByCookie?(cookie: string): Promise<ProviderUser>;
 }
 
 /** 短信验证码发送结果；error 优先透传服务端 message，不做猜测。 */

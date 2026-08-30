@@ -389,6 +389,20 @@ export const neteaseProvider: OnlineMusicProvider = {
             const message = response?.message ?? response?.msg ?? 'phone login failed';
             throw new OnlineProviderError('auth-required', String(message), 'netease');
         },
+        async loginByCookie(cookie) {
+            const trimmed = cookie.trim();
+            if (!trimmed) {
+                throw new OnlineProviderError('auth-required', 'cookie is empty', 'netease');
+            }
+            const response = await neteaseApi.loginByCookie(trimmed);
+            const profile = response?.data?.profile ?? response?.profile;
+            if (response?.code === 200 && profile) {
+                return normalizeUser(profile);
+            }
+            // cookie 无效/过期或触发风控时透传服务端 message。
+            const message = response?.message ?? response?.msg ?? 'cookie login failed';
+            throw new OnlineProviderError('auth-required', String(message), 'netease');
+        },
     },
     library: {
         async getUserPlaylists(userId, limit, offset) {
