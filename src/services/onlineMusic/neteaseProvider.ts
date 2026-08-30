@@ -392,15 +392,17 @@ export const neteaseProvider: OnlineMusicProvider = {
         async loginByCookie(cookie) {
             const trimmed = cookie.trim();
             if (!trimmed) {
-                throw new OnlineProviderError('auth-required', 'cookie is empty', 'netease');
+                throw new OnlineProviderError('auth-required', '', 'netease');
             }
             const response = await neteaseApi.loginByCookie(trimmed);
+            // /login/status 的 code 包在 data 里（{data:{code,profile}}），两层都兼容。
+            const code = response?.code ?? response?.data?.code;
             const profile = response?.data?.profile ?? response?.profile;
-            if (response?.code === 200 && profile) {
+            if (code === 200 && profile) {
                 return normalizeUser(profile);
             }
-            // cookie 无效/过期或触发风控时透传服务端 message。
-            const message = response?.message ?? response?.msg ?? 'cookie login failed';
+            // cookie 无效/过期时透传服务端 message；没有则抛空串，由 UI 展示通用文案。
+            const message = response?.message ?? response?.msg ?? response?.data?.message ?? response?.data?.msg ?? '';
             throw new OnlineProviderError('auth-required', String(message), 'netease');
         },
     },

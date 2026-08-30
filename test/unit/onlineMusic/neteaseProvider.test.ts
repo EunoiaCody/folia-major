@@ -329,8 +329,7 @@ describe('neteaseProvider', () => {
 
     it('logs in with a pasted cookie and returns the normalized user', async () => {
         vi.mocked(neteaseApi.loginByCookie).mockResolvedValue({
-            code: 200,
-            data: { profile: { userId: 77, nickname: 'CookieUser', avatarUrl: 'http://p1.music.126.net/a.jpg' } },
+            data: { code: 200, profile: { userId: 77, nickname: 'CookieUser', avatarUrl: 'http://p1.music.126.net/a.jpg' } },
         } as any);
 
         await expect(neteaseProvider.auth!.loginByCookie!('MUSIC_U=abc; __csrf=1')).resolves.toMatchObject({
@@ -341,13 +340,19 @@ describe('neteaseProvider', () => {
     });
 
     it('throws with the server message when the cookie is rejected', async () => {
-        vi.mocked(neteaseApi.loginByCookie).mockResolvedValue({ code: 400, message: '登录信息已过期' } as any);
+        vi.mocked(neteaseApi.loginByCookie).mockResolvedValue({ data: { code: 301, message: '登录信息已过期' } } as any);
 
         await expect(neteaseProvider.auth!.loginByCookie!('MUSIC_U=expired')).rejects.toThrow('登录信息已过期');
     });
 
+    it('throws an empty-message error so the UI shows its own generic text when the server gives none', async () => {
+        vi.mocked(neteaseApi.loginByCookie).mockResolvedValue({ data: { code: 301, account: null, profile: null } } as any);
+
+        await expect(neteaseProvider.auth!.loginByCookie!('MUSIC_U=bad')).rejects.toMatchObject({ message: '' });
+    });
+
     it('rejects an empty cookie without calling the backend', async () => {
-        await expect(neteaseProvider.auth!.loginByCookie!('   ')).rejects.toThrow('cookie is empty');
+        await expect(neteaseProvider.auth!.loginByCookie!('   ')).rejects.toThrow();
         expect(neteaseApi.loginByCookie).not.toHaveBeenCalled();
     });
 });

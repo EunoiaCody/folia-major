@@ -127,6 +127,20 @@ const toHttps = (url?: unknown) => {
   return url.replace(/^http:/, 'https:');
 };
 
+/**
+ * 清洗用户粘贴的网易云登录 cookie：换行转分号、压缩分号空白、去掉值两侧引号。
+ * 浏览器复制的 Cookie 可能带引号（MUSIC_U="xxx"）或每行一条，后端 cookieToJson
+ * 要求 key=value 恰好两段，不清洗会静默丢弃字段导致校验失败。
+ */
+export const normalizePastedCookie = (cookie: string): string => {
+  return cookie
+    .replace(/\r?\n/g, ';')
+    .replace(/\s*;\s*/g, ';')
+    .replace(/="([^"]+)"/g, '=$1')
+    .replace(/='([^']+)'/g, '=$1')
+    .trim();
+};
+
 const normalizeArtistName = (value: any): string => {
   if (typeof value === 'string') return value;
   if (value && typeof value.name === 'string') return value.name;
@@ -543,11 +557,13 @@ export const neteaseApi = {
   // Cookie 登录：先把用户提供的 cookie 写入 session，再调 /login/status 校验并取 profile。
   // 之所以先写 session 而不是显式带 ?cookie=，是避免 fetchWithCreds 在无会话时追加匿名 cookie
   // 造成重复 cookie 参数；校验失败会回滚清除 session。
+  // 注意：/login/status 的响应把 code 包在 data 里（{data:{code,profile}}），两层都要兼容。
   loginByCookie: async (cookie: string) => {
-    writeProviderSessionValue('netease', 'cookie', cookie);
+    writeProviderSessionValue('netease', 'cookie', normalizePastedCookie(cookie));
     try {
       const res = await fetchWithCreds(`/login/status`);
-      if (res?.code === 200 && res?.data?.profile) {
+      const code = res?.code ?? res?.data?.code;
+      if (code === 200 && res?.data?.profile) {
         return res;
       }
       removeProviderSessionValue('netease', 'cookie', ['netease_cookie']);
