@@ -1434,6 +1434,11 @@ export type SettingsUiState = {
      */
     unlockVipSongs: boolean;
     /**
+     * 无版权歌曲自动替代：privilege.st < 0（无版权标记）的歌曲不再被 UI 过滤/拦截，
+     * 播放时尝试用 unblock 或跨 provider 匹配同曲音源。关闭时维持原「无版权」行为。
+     */
+    unlockUnavailableSongs: boolean;
+    /**
      * 同平台 unblock 仍不可用时，是否允许跨 provider（酷狗/QQ）搜索同曲替换音源。
      */
     unlockUseCrossProviderFallback: boolean;
@@ -1595,6 +1600,7 @@ export type SettingsUiState = {
     handleToggleDisableHomeDynamicBackground: (disable: boolean) => void;
     handleToggleAutoUseBestLyric: (enable: boolean) => void;
     handleToggleUnlockVipSongs: (enable: boolean) => void;
+    handleToggleUnlockUnavailableSongs: (enable: boolean) => void;
     handleToggleUnlockUseCrossProviderFallback: (enable: boolean) => void;
     handleSetPreferredAlternativeLyricSource: (source: LyricProviderSource) => void;
     handleSetLocalLyricsPriority: (priority: LocalLyricsPriority) => void;
@@ -1747,6 +1753,7 @@ export const useSettingsUiStore = create<SettingsUiState>((set, get) => ({
     disableHomeDynamicBackground: readStoredDisableHomeDynamicBackground(),
     autoUseBestLyric: getStoredBoolean('auto_use_best_lyric', true),
     unlockVipSongs: getStoredBoolean('unlock_vip_songs', true),
+    unlockUnavailableSongs: getStoredBoolean('unlock_unavailable_songs', true),
     unlockUseCrossProviderFallback: getStoredBoolean('unlock_use_cross_provider_fallback', true),
     preferredAlternativeLyricSource: readStoredPreferredAlternativeLyricSource(),
     localLyricsPriority: readStoredLocalLyricsPriority(),
@@ -2008,6 +2015,14 @@ export const useSettingsUiStore = create<SettingsUiState>((set, get) => ({
         notify(get, {
             type: 'info',
             text: i18n.t('notifications.' + (enable ? 'unlockVipSongsOn' : 'unlockVipSongsOff')),
+        });
+    },
+    handleToggleUnlockUnavailableSongs: (enable) => {
+        setStoredBoolean('unlock_unavailable_songs', enable);
+        set({ unlockUnavailableSongs: enable });
+        notify(get, {
+            type: 'info',
+            text: i18n.t('notifications.' + (enable ? 'unlockUnavailableSongsOn' : 'unlockUnavailableSongsOff')),
         });
     },
     handleToggleUnlockUseCrossProviderFallback: (enable) => {

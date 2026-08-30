@@ -79,6 +79,8 @@ const createContext = (overrides: CommandPaletteContextOverrides = {}): CommandP
             toggleAlwaysShowMainWindowTitlebar: vi.fn(),
             unlockVipSongs: true,
             toggleUnlockVipSongs: vi.fn(),
+            unlockUnavailableSongs: true,
+            toggleUnlockUnavailableSongs: vi.fn(),
             unlockUseCrossProviderFallback: true,
             toggleUnlockUseCrossProviderFallback: vi.fn(),
             voiceInputPauseSupported: false,

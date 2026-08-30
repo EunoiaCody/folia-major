@@ -13,6 +13,7 @@ import { getSongResourceCacheKey } from './onlineMusic/resourceKeys';
 import { getCachedSongAudioBlob, getCachedSongReplayGain, getSongCacheWithLegacyMigration } from './onlineMusic/resourceCache';
 import { toSafePlaybackUrl, isNeteaseTrialAudioUrl } from '../utils/appPlaybackHelpers';
 import { getProviderSongMetadata } from './onlineMusic/songMetadata';
+import { isSongUnavailable } from './onlineMusic/songAvailability';
 import { resolveUnlockedAudioSource } from './unlockService';
 
 export async function loadOnlineSongAudioSource(
@@ -54,10 +55,14 @@ export async function loadOnlineSongAudioSource(
 
     let source = null;
     try {
-        // VIP 解锁：总开关开启时走解锁编排（标准授权 → 同平台 unblock → 跨 provider 替换），
+        // 解锁编排：无版权歌由 unlockUnavailableSongs 控制，其余（VIP/试听）由 unlockVipSongs 控制，
         // 关闭时保持原有单 provider 标准请求语义。
-        source = useSettingsUiStore.getState().unlockVipSongs
-            ? await resolveUnlockedAudioSource(song, audioQuality)
+        const settings = useSettingsUiStore.getState();
+        const allowUnlock = isSongUnavailable(song)
+            ? settings.unlockUnavailableSongs
+            : settings.unlockVipSongs;
+        source = allowUnlock
+            ? await resolveUnlockedAudioSource(song, audioQuality, { allow: true })
             : await omni.getAudioSource(song, audioQuality);
     } catch (error) {
         console.warn('[OnlinePlayback] Provider audio source is temporarily unavailable', error);

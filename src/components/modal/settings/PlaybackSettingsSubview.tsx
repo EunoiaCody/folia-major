@@ -43,6 +43,7 @@ const PlaybackSettingsSubview: React.FC<PlaybackSettingsSubviewProps> = ({
         audioOutputDeviceId,
         autoUseBestLyric,
         unlockVipSongs,
+        unlockUnavailableSongs,
         unlockUseCrossProviderFallback,
         preferredAlternativeLyricSource,
         localLyricsPriority,
@@ -50,6 +51,7 @@ const PlaybackSettingsSubview: React.FC<PlaybackSettingsSubviewProps> = ({
         globalLyricTimelineOffsetMs,
         onToggleAutoUseBestLyric,
         onToggleUnlockVipSongs,
+        onToggleUnlockUnavailableSongs,
         onToggleUnlockUseCrossProviderFallback,
         onPreferredAlternativeLyricSourceChange,
         onLocalLyricsPriorityChange,
@@ -58,6 +60,7 @@ const PlaybackSettingsSubview: React.FC<PlaybackSettingsSubviewProps> = ({
         audioOutputDeviceId: state.audioOutputDeviceId,
         autoUseBestLyric: state.autoUseBestLyric,
         unlockVipSongs: state.unlockVipSongs,
+        unlockUnavailableSongs: state.unlockUnavailableSongs,
         unlockUseCrossProviderFallback: state.unlockUseCrossProviderFallback,
         preferredAlternativeLyricSource: state.preferredAlternativeLyricSource,
         localLyricsPriority: state.localLyricsPriority,
@@ -65,6 +68,7 @@ const PlaybackSettingsSubview: React.FC<PlaybackSettingsSubviewProps> = ({
         globalLyricTimelineOffsetMs: state.globalLyricTimelineOffsetMs,
         onToggleAutoUseBestLyric: state.handleToggleAutoUseBestLyric,
         onToggleUnlockVipSongs: state.handleToggleUnlockVipSongs,
+        onToggleUnlockUnavailableSongs: state.handleToggleUnlockUnavailableSongs,
         onToggleUnlockUseCrossProviderFallback: state.handleToggleUnlockUseCrossProviderFallback,
         onPreferredAlternativeLyricSourceChange: state.handleSetPreferredAlternativeLyricSource,
         onLocalLyricsPriorityChange: state.handleSetLocalLyricsPriority,
@@ -256,6 +260,17 @@ const PlaybackSettingsSubview: React.FC<PlaybackSettingsSubviewProps> = ({
                             </div>
                         </div>
                         {renderToggle(unlockVipSongs, () => onToggleUnlockVipSongs(!unlockVipSongs))}
+                    </div>
+                    <div className="p-4 flex items-center justify-between gap-4 border-t" style={{ borderColor: 'var(--border-primary, rgba(255,255,255,0.06))' }}>
+                        <div className="space-y-1">
+                            <div className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
+                                {t('options.unlockUnavailableSongs')}
+                            </div>
+                            <div className="text-[11px] opacity-50 max-w-[420px]" style={{ color: 'var(--text-secondary)' }}>
+                                {t('options.unlockUnavailableSongsDesc')}
+                            </div>
+                        </div>
+                        {renderToggle(unlockUnavailableSongs, () => onToggleUnlockUnavailableSongs(!unlockUnavailableSongs))}
                     </div>
                     <div className="p-4 flex items-center justify-between gap-4 border-t" style={{ borderColor: 'var(--border-primary, rgba(255,255,255,0.06))' }}>
                         <div className="space-y-1">

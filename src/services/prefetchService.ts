@@ -18,6 +18,7 @@ import { getSongResourceCacheKey } from './onlineMusic/resourceKeys';
 import { getSongCacheWithLegacyMigration, hasCachedSongAudio } from './onlineMusic/resourceCache';
 import { toSafePlaybackUrl } from '../utils/appPlaybackHelpers';
 import { getProviderSongMetadata } from './onlineMusic/songMetadata';
+import { isSongUnavailable } from './onlineMusic/songAvailability';
 import { resolveUnlockedAudioSource } from './unlockService';
 import { ensureTrackProfile, setAnalysisScope } from './automix/profileService';
 import { modeNeedsBeatGrid } from './automix/transitionStrategy';
@@ -217,9 +218,13 @@ const prefetchSong = async (
                 data.audioUrl = 'CACHED_IN_DB';
                 data.audioUrlFetchedAt = Date.now();
             } else if (!signal.aborted) {
-                const audioSource = currentSettings.unlockVipSongs
-                    ? await resolveUnlockedAudioSource(song, audioQuality)
-                    : await omni.getAudioSource(song, audioQuality);
+                const audioSource = isSongUnavailable(song)
+                    ? (currentSettings.unlockUnavailableSongs
+                        ? await resolveUnlockedAudioSource(song, audioQuality, { allow: true })
+                        : await omni.getAudioSource(song, audioQuality))
+                    : (currentSettings.unlockVipSongs
+                        ? await resolveUnlockedAudioSource(song, audioQuality, { allow: true })
+                        : await omni.getAudioSource(song, audioQuality));
                 const url = toSafePlaybackUrl(audioSource?.url) ?? null;
                 if (url) {
                     data.audioUrl = url;

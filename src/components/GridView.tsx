@@ -3,7 +3,8 @@ import { motion, useMotionValue, animate, AnimatePresence, useDragControls } fro
 import { ChevronLeft, Disc, Download, Play, Plus, Loader2, Heart, ListPlus, Pencil, Search, X, RefreshCw, Trash2, Star, Tags } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { SongResult, type LocalSong, type StatusMessage, Theme, type UnifiedSong } from '../types';
-import { getSongUnavailableLabel, isSongUnavailable } from '../services/onlineMusic/songAvailability';
+import { getSongUnavailableLabel, isSongUnavailable, shouldAutoReplaceUnavailableSong } from '../services/onlineMusic/songAvailability';
+import { useSettingsUiStore } from '../stores/useSettingsUiStore';
 import { getNavidromeConfig, navidromeApi } from '../services/navidromeService';
 import { formatSongName } from '../utils/songNameFormatter';
 import { getSizedCoverUrl } from '../utils/coverUrl';
@@ -896,7 +897,10 @@ export const GridView: React.FC<GridViewProps> = ({
         return () => cancelAnimationFrame(id);
     }, [draftSearchQuery.length, showSearchPanel]);
 
-    const playableTracks = useMemo(() => displayTracks.filter(track => !isSongUnavailable(track)), [displayTracks]);
+    const playableTracks = useMemo(() => {
+        const replaceUnavailable = useSettingsUiStore.getState().unlockUnavailableSongs;
+        return displayTracks.filter(track => !isSongUnavailable(track) || (replaceUnavailable && shouldAutoReplaceUnavailableSong(track)));
+    }, [displayTracks]);
     const handleSourceEditToggle = useCallback(async () => {
         if (!collection) return;
 

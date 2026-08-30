@@ -22,7 +22,7 @@ import { useProgressiveItemEntrance } from './folia-grid/useProgressiveItemEntra
 import { useLocalLibraryCatalog } from '../hooks/useLocalLibraryCatalog';
 import { buildLocalLibraryIndex, followEntityRedirect } from '../utils/localLibraryIndex';
 import { ArtistGridInfoCutInPanel } from './artist-grid/ArtistGridInfoCutInPanel';
-import { isSongUnavailable } from '../services/onlineMusic/songAvailability';
+import { isSongUnavailable, shouldAutoReplaceUnavailableSong } from '../services/onlineMusic/songAvailability';
 
 /*
  * ArtistGridView.tsx
@@ -654,9 +654,10 @@ const ArtistGridView: React.FC<ArtistGridViewProps> = ({
 
         return itemsList;
     }, [albumGridItems, artistInfo, topSongs]);
-    // Queue context for track selection: unavailable tracks are excluded so playback matches the playlist/album surfaces.
+    // Queue context for track selection: unavailable tracks are kept when auto-replace is on
+    // so playback can fall back to a matched source from another provider.
     const playableTopSongs = useMemo(
-        () => topSongs.filter(song => !isSongUnavailable(song)),
+        () => topSongs.filter(song => !isSongUnavailable(song) || shouldAutoReplaceUnavailableSong(song)),
         [topSongs]
     );
     const shouldAnimateItemEntrance = useProgressiveItemEntrance(

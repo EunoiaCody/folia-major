@@ -29,6 +29,15 @@ export const settingsCommands: CommandPaletteCommand[] = [
         context => context.settings.toggleUnlockUseCrossProviderFallback(),
         { icon: Settings2 },
     ),
+    createToggleCommand(
+        'unlock-unavailable-songs-toggle',
+        'settings',
+        'Unavailable song auto-replace',
+        'Play grey NetEase songs via matched sources from other platforms',
+        ['unavailable replace', 'grey song', 'auto replace', '无版权替代', '无版权播放', '下架歌曲', '灰色歌曲', 'wubanquantihuan', 'wubanquanbofang', 'wbqth', 'wbqb'],
+        context => context.settings.toggleUnlockUnavailableSongs(),
+        { icon: Settings2 },
+    ),
     createSettingsCommand('settings-help', 'Open Help', 'Open help and shortcuts', ['help', '帮助', 'bangzhu', 'bz'], 'help', null, { executeShortcut: 'h' }),
     sleepTimerCommand,
     {

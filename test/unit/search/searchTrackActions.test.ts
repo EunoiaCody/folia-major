@@ -1,6 +1,27 @@
 import { describe, expect, it, vi } from 'vitest';
 import { dispatchSearchTrackAction } from '@/components/app/search/searchTrackActions';
 import type { LocalSong, UnifiedSong } from '@/types';
+import { registerOnlineMusicProvider } from '@/services/onlineMusic/providerRegistry';
+
+const getStateMock = vi.hoisted(() => vi.fn(() => ({ unlockUnavailableSongs: false })));
+vi.mock('@/stores/useSettingsUiStore', () => ({
+    useSettingsUiStore: { getState: getStateMock },
+}));
+
+// Netease provider so shouldAutoReplaceUnavailableSong can resolve availability.
+registerOnlineMusicProvider({
+    id: 'netease',
+    displayName: 'netease',
+    capabilities: { search: true, playback: true, lyrics: true, auth: true, userLibrary: true, playlists: true, albums: true, artists: true, recommendations: true, mutations: true, wordByWordLyrics: true },
+    normalizeSong: raw => raw as UnifiedSong,
+    playback: {
+        getSongDetail: async () => null,
+        getAudioSource: async () => null,
+        getAvailability: (song: UnifiedSong) => (song.privilege?.st != null && song.privilege.st < 0
+            ? { state: 'unavailable', label: '无版权' }
+            : { state: 'playable' }),
+    },
+});
 
 // Verifies search playback and queue actions dispatch to the matching source.
 
@@ -78,5 +99,22 @@ describe('dispatchSearchTrackAction', () => {
 
         expect(didDispatch).toBe(false);
         expect(actions.onOnline).not.toHaveBeenCalled();
+    });
+
+    it('lets unavailable songs through when auto-replace is enabled', () => {
+        getStateMock.mockReturnValue({ unlockUnavailableSongs: true });
+        const actions = {
+            localSongs: [],
+            onLocal: vi.fn(),
+            onNavidrome: vi.fn(),
+            onOnline: vi.fn(),
+        };
+        const didDispatch = dispatchSearchTrackAction(track({
+            privilege: { st: -200 },
+        }), actions);
+
+        expect(didDispatch).toBe(true);
+        expect(actions.onOnline).toHaveBeenCalledTimes(1);
+        getStateMock.mockReturnValue({ unlockUnavailableSongs: false });
     });
 });

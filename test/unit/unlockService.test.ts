@@ -140,4 +140,25 @@ describe('resolveUnlockedAudioSource', () => {
         expect(result).toBeNull();
         expect(omniSearchProviderSongsMock).not.toHaveBeenCalled();
     });
+
+    it('honours an explicit allow option for unavailable-song auto-replace', async () => {
+        // 无版权歌的调用方显式传 allow，绕过 store 默认值（unlockVipSongs=false 也不影响）。
+        getStateMock.mockReturnValue({ unlockVipSongs: false, unlockUseCrossProviderFallback: true });
+        const song = makeSong();
+        const kugouSong = makeSong({
+            id: 'k1',
+            name: '晴天',
+            artists: [{ id: 9, name: '周杰伦' }],
+            sourceRef: { kind: 'online', providerId: 'kugou', mediaId: 'k1' },
+        });
+        omniGetAudioSourceMock.mockImplementation((target: SongResult) =>
+            providerIdOf(target) === 'kugou' ? Promise.resolve(makeSource({ url: 'https://fs.kugou.com/x.flac' })) : Promise.resolve(null),
+        );
+        omniSearchProviderSongsMock.mockResolvedValue({ items: [kugouSong], hasMore: false, nextOffset: 0 });
+
+        const result = await resolveUnlockedAudioSource(song, 'high', { allow: true });
+
+        expect(result?.unlocked).toEqual({ from: 'kugou', matchedSongKey: expect.any(String) });
+        expect(omniSearchProviderSongsMock).toHaveBeenCalled();
+    });
 });

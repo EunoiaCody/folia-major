@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import type { Dispatch, MutableRefObject, SetStateAction } from 'react';
 import type { MotionValue } from 'framer-motion';
 import { applyOnlineAudioSourceMetadata, loadOnlineSongAudioSource, loadOnlineSongLyrics } from '../services/onlinePlayback';
-import { getSongReplacement, isSongUnavailable } from '../services/onlineMusic/songAvailability';
+import { getSongReplacement, isSongUnavailable, shouldAutoReplaceUnavailableSong } from '../services/onlineMusic/songAvailability';
 import { getSongResourceCacheKey } from '../services/onlineMusic/resourceKeys';
 import { omni } from '../services/onlineMusic/omni';
 import { getCachedSongCoverUrl, hasCachedSongAudio } from '../services/onlineMusic/resourceCache';
@@ -223,7 +223,7 @@ export function usePlaybackQueueController({
         const queueAnchorSong = mainSnapshot?.currentSong ?? (activePlaybackContext === 'main' ? currentSong : null);
         const existingQueue = mainSnapshot?.playQueue ?? (activePlaybackContext === 'main' ? playQueue : []);
         const baseQueue = existingQueue.length > 0 ? existingQueue : (queueAnchorSong ? [queueAnchorSong] : []);
-        const queueableSongs = songs.filter(song => !isSongUnavailable(song));
+        const queueableSongs = songs.filter(song => !isSongUnavailable(song) || shouldAutoReplaceUnavailableSong(song));
         const { nextQueue, affectedSongs, changed } = applyQueueAddBehavior({
             queue: baseQueue,
             songs: queueableSongs,
@@ -275,7 +275,7 @@ export function usePlaybackQueueController({
     }, [activePlaybackContext, currentSong, mainPlaybackSnapshotRef, persistLastPlaybackCache, playQueue, queueAddBehavior, setPlayQueue, setStatusMsg, t]);
 
     const addOnlineSongToQueue = useCallback((song: SongResult) => {
-        if (isSongUnavailable(song)) {
+        if (isSongUnavailable(song) && !shouldAutoReplaceUnavailableSong(song)) {
             return;
         }
 
@@ -302,7 +302,7 @@ export function usePlaybackQueueController({
         if (isLocalPlaybackSong(queuedSong) || isNavidromePlaybackSong(queuedSong)) {
             return true;
         }
-        return !isSongUnavailable(queuedSong) && omni.canPlaySong(queuedSong);
+        return (!isSongUnavailable(queuedSong) || shouldAutoReplaceUnavailableSong(queuedSong)) && omni.canPlaySong(queuedSong);
     }, []);
 
     // Keeps unavailable provider entries in the queue so they can be retried after configuration changes.
@@ -351,7 +351,7 @@ export function usePlaybackQueueController({
                 return [replacementSong];
             }
 
-            if (isSongUnavailable(queuedSong)) {
+            if (isSongUnavailable(queuedSong) && !shouldAutoReplaceUnavailableSong(queuedSong)) {
                 return [];
             }
 
@@ -484,7 +484,7 @@ export function usePlaybackQueueController({
         const skipCount = options.unavailableSkipCount ?? 0;
         playbackAutoSkipCountRef.current = skipCount;
 
-        if (!isLocal && !isNavidrome && isSongUnavailable(song)) {
+        if (!isLocal && !isNavidrome && isSongUnavailable(song) && !shouldAutoReplaceUnavailableSong(song)) {
             if (await handleMarkedUnavailableSong(song, queueContext, isFmCall, options)) {
                 return;
             }

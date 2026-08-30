@@ -118,6 +118,8 @@ export type CommandPaletteContextDeps = {
     canUseTransitionPerformance: () => boolean;
     unlockVipSongs: boolean;
     handleToggleUnlockVipSongs: (enable: boolean) => void;
+    unlockUnavailableSongs: boolean;
+    handleToggleUnlockUnavailableSongs: (enable: boolean) => void;
     unlockUseCrossProviderFallback: boolean;
     handleToggleUnlockUseCrossProviderFallback: (enable: boolean) => void;
 
@@ -227,6 +229,8 @@ export const buildCommandPaletteContext = (deps: CommandPaletteContextDeps): Com
         canUseTransitionPerformance: deps.canUseTransitionPerformance,
         unlockVipSongs: deps.unlockVipSongs,
         toggleUnlockVipSongs: () => deps.handleToggleUnlockVipSongs(!deps.unlockVipSongs),
+        unlockUnavailableSongs: deps.unlockUnavailableSongs,
+        toggleUnlockUnavailableSongs: () => deps.handleToggleUnlockUnavailableSongs(!deps.unlockUnavailableSongs),
         unlockUseCrossProviderFallback: deps.unlockUseCrossProviderFallback,
         toggleUnlockUseCrossProviderFallback: () => deps.handleToggleUnlockUseCrossProviderFallback(!deps.unlockUseCrossProviderFallback),
     },

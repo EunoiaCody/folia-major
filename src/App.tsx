@@ -186,6 +186,8 @@ export default function App() {
     const handleToggleTransitionPerformance = useSettingsUiStore(state => state.handleToggleTransitionPerformance);
     const unlockVipSongs = useSettingsUiStore(state => state.unlockVipSongs);
     const handleToggleUnlockVipSongs = useSettingsUiStore(state => state.handleToggleUnlockVipSongs);
+    const unlockUnavailableSongs = useSettingsUiStore(state => state.unlockUnavailableSongs);
+    const handleToggleUnlockUnavailableSongs = useSettingsUiStore(state => state.handleToggleUnlockUnavailableSongs);
     const unlockUseCrossProviderFallback = useSettingsUiStore(state => state.unlockUseCrossProviderFallback);
     const handleToggleUnlockUseCrossProviderFallback = useSettingsUiStore(state => state.handleToggleUnlockUseCrossProviderFallback);
     /**
@@ -2355,6 +2357,8 @@ export default function App() {
         canUseTransitionPerformance,
         unlockVipSongs,
         handleToggleUnlockVipSongs,
+        unlockUnavailableSongs,
+        handleToggleUnlockUnavailableSongs,
         unlockUseCrossProviderFallback,
         handleToggleUnlockUseCrossProviderFallback,
 
@@ -2405,6 +2409,9 @@ export default function App() {
         handleToggleSleepTimer,
         handleToggleSubtitleOverlayBackground,
         handleToggleTransitionPerformance,
+        handleToggleUnlockUnavailableSongs,
+        handleToggleUnlockUseCrossProviderFallback,
+        handleToggleUnlockVipSongs,
         handleToggleVoiceInputPause,
         handleToggleWallpaperMode,
         hidePlayerTranslationSubtitle,
@@ -2453,6 +2460,7 @@ export default function App() {
         transitionMode,
         transitionPerformance,
         transparentPlayerBackground,
+        unlockUnavailableSongs,
         unlockUseCrossProviderFallback,
         unlockVipSongs,
         visualizerBackgroundMode,
