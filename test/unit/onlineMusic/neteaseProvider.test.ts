@@ -23,6 +23,7 @@ vi.mock('@/services/netease', () => ({
         verifyLoginCaptcha: vi.fn(),
         loginByPhoneCaptcha: vi.fn(),
         loginByCookie: vi.fn(),
+        getMatchedUrl: vi.fn(),
     },
 }));
 
@@ -274,6 +275,33 @@ describe('neteaseProvider', () => {
             .mockRejectedValueOnce(new Error('backend unblock unsupported'));
 
         await expect(neteaseProvider.playback!.getAudioSource(song, 'high', { allowUnlock: true })).resolves.toBeNull();
+    });
+
+    it('falls back to the /song/url/match endpoint when unblock=true yields nothing', async () => {
+        vi.mocked(neteaseApi.getSongUrl)
+            .mockResolvedValueOnce({ data: [{ url: null }] } as any)
+            .mockResolvedValueOnce({ data: [{ url: null }] } as any);
+        vi.mocked(neteaseApi.getMatchedUrl).mockResolvedValue({
+            code: 200,
+            data: 'http://bd-er.kuwo.cn/trackmedia/xxx.mp3',
+        } as any);
+
+        await expect(neteaseProvider.playback!.getAudioSource(song, 'high', { allowUnlock: true })).resolves.toMatchObject({
+            url: 'https://bd-er.kuwo.cn/trackmedia/xxx.mp3',
+            unlocked: { from: 'netease-unblock' },
+        });
+        expect(neteaseApi.getSongUrl).toHaveBeenNthCalledWith(2, 42, 'exhigh', { unblock: true });
+        expect(neteaseApi.getMatchedUrl).toHaveBeenCalledWith(42);
+    });
+
+    it('returns null when both unblock channels fail', async () => {
+        vi.mocked(neteaseApi.getSongUrl)
+            .mockResolvedValueOnce({ data: [{ url: null }] } as any)
+            .mockResolvedValueOnce({ data: [{ url: null }] } as any);
+        vi.mocked(neteaseApi.getMatchedUrl).mockResolvedValue({ code: 500, data: [] } as any);
+
+        await expect(neteaseProvider.playback!.getAudioSource(song, 'high', { allowUnlock: true })).resolves.toBeNull();
+        expect(neteaseApi.getMatchedUrl).toHaveBeenCalledTimes(1);
     });
 
     it('normalizes captcha send success', async () => {

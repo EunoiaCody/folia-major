@@ -569,7 +569,9 @@ export function usePlaybackQueueController({
                         });
                     });
                 } else {
-                    setStatusMsg({ type: 'error', text: t('status.songUnavailable') });
+                    // 真下架（无版权标记）保持「已下架」；VIP/授权歌解锁链路全失败时提示解锁失败，
+                    // 避免把「第三方解锁源不可达」误报成版权下架。
+                    setStatusMsg({ type: 'error', text: isSongUnavailable(song) ? t('status.songUnavailable') : t('status.songUnlockFailed') });
                 }
                 return;
             }

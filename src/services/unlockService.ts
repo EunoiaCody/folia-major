@@ -83,12 +83,22 @@ export const resolveUnlockedAudioSource = async (
     const source = await omni.getAudioSource(song, quality, allow ? { allowUnlock: true } : undefined);
     if (source) return source;
     // 总开关关闭（保持原行为）或不允许跨 provider 替换时到此为止。
-    if (!allow || !allowCrossProvider) return null;
+    if (!allow || !allowCrossProvider) {
+        console.warn(`[UnlockService] source unavailable for "${song.name}" (allow=${allow}, crossProvider=${allowCrossProvider}); provider adapter logged the unlock reason`);
+        return null;
+    }
 
     // 3：跨 provider 替换（显式 cross-provider，保留每条结果的 providerId）。
     const target = buildTargetSong(song);
     for (const providerId of UNLOCK_FALLBACK_PROVIDERS) {
         try {
+            // 未配置的 provider（Web 端缺 VITE_KUGOU_API_BASE / VITE_QQ_API_BASE）
+            // 直接提示，避免把「未配置」误当成「搜索失败」。
+            const availability = omni.getProviderAvailability(providerId);
+            if (!availability.configured) {
+                console.warn(`[UnlockService] skip ${providerId} fallback for "${song.name}": ${providerId} API not configured`);
+                continue;
+            }
             const matched = await findMatchingSource(providerId, target, quality);
             if (matched) {
                 console.log(`[UnlockService] cross-provider fallback ${providerId} for "${song.name}" -> ${matched.url.slice(0, 90)}...`);
@@ -99,5 +109,6 @@ export const resolveUnlockedAudioSource = async (
             console.warn(`[UnlockService] provider ${providerId} fallback failed for song "${song.name}"`, error);
         }
     }
+    console.warn(`[UnlockService] all unlock channels failed for "${song.name}" (standard/unblock/match + cross-provider)`);
     return null;
 };

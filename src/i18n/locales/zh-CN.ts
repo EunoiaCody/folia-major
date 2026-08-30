@@ -165,6 +165,7 @@ export default {
     "providerUserAlbumsUnavailable": "{{provider}} 暂未提供用户专辑库。",
     "providerLibraryUnavailable": "{{provider}} 暂未提供歌单库。",
     "songUnavailable": "歌曲已下架",
+    "songUnlockFailed": "无法获取可播放音源（已尝试解锁与替代），可稍后重试或检查网络",
     "songUnavailableSkipping": "歌曲已下架，正在跳过",
     "songUnavailablePrompt": "歌曲已下架，{{seconds}} 秒后自动跳过",
     "songUnavailableAlternativeTitle": "",

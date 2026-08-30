@@ -13,11 +13,13 @@ vi.mock('@/stores/useSettingsUiStore', () => ({
 
 const omniGetAudioSourceMock = vi.hoisted(() => vi.fn());
 const omniSearchProviderSongsMock = vi.hoisted(() => vi.fn());
+const omniGetProviderAvailabilityMock = vi.hoisted(() => vi.fn(() => ({ configured: true })));
 
 vi.mock('@/services/onlineMusic/omni', () => ({
     omni: {
         getAudioSource: omniGetAudioSourceMock,
         searchProviderSongs: omniSearchProviderSongsMock,
+        getProviderAvailability: omniGetProviderAvailabilityMock,
     },
 }));
 
@@ -160,5 +162,19 @@ describe('resolveUnlockedAudioSource', () => {
 
         expect(result?.unlocked).toEqual({ from: 'kugou', matchedSongKey: expect.any(String) });
         expect(omniSearchProviderSongsMock).toHaveBeenCalled();
+    });
+
+    it('logs a diagnostic warning and returns null when the whole chain fails', async () => {
+        getStateMock.mockReturnValue({ unlockVipSongs: true, unlockUseCrossProviderFallback: true });
+        const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        const song = makeSong();
+        omniGetAudioSourceMock.mockResolvedValue(null);
+        omniSearchProviderSongsMock.mockResolvedValue({ items: [], hasMore: false, nextOffset: 0 });
+
+        const result = await resolveUnlockedAudioSource(song, 'high');
+
+        expect(result).toBeNull();
+        expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('[UnlockService] all unlock channels failed'));
+        warnSpy.mockRestore();
     });
 });

@@ -554,6 +554,12 @@ export const neteaseApi = {
     return res;
   },
 
+  // 网易云歌曲解灰端点（适配 SPlayer 的 UNM-Server）：直接用网易云 songId 从
+  // unblockmusic-utils 匹配第三方音源。与 unblock=true 同源（matchID），作为第二通道。
+  getMatchedUrl: async (id: number) => {
+    return fetchWithCreds(`/song/url/match?id=${id}`);
+  },
+
   // Cookie 登录：先把用户提供的 cookie 写入 session，再调 /login/status 校验并取 profile。
   // 之所以先写 session 而不是显式带 ?cookie=，是避免 fetchWithCreds 在无会话时追加匿名 cookie
   // 造成重复 cookie 参数；校验失败会回滚清除 session。

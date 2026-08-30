@@ -165,6 +165,7 @@ export default {
     "providerUserAlbumsUnavailable": "{{provider}} does not provide the user's album library.",
     "providerLibraryUnavailable": "{{provider}} does not provide a playlist library.",
     "songUnavailable": "Song has been taken down",
+    "songUnlockFailed": "No playable source found (unlock and fallback were tried). Retry later or check the network.",
     "songUnavailableSkipping": "Song has been taken down, skipping",
     "songUnavailablePrompt": "Song has been taken down. Auto-skipping in {{seconds}}s",
     "songUnavailableAlternativeTitle": "Alternate version available",

@@ -164,6 +164,7 @@ export default {
     "providerUserAlbumsUnavailable": "{{provider}} tidak menyediakan koleksi album pengguna.",
     "providerLibraryUnavailable": "{{provider}} tidak menyediakan perpustakaan playlist.",
     "songUnavailable": "Lagu telah dihapus",
+    "songUnlockFailed": "Tidak ada sumber yang dapat diputar (buka kunci dan penggantian sudah dicoba). Coba lagi nanti atau periksa jaringan.",
     "songUnavailableSkipping": "Lagu telah dihapus, dilewati",
     "songUnavailablePrompt": "Lagu telah dihapus. Akan dilewati otomatis dalam {{seconds}} detik",
     "songUnavailableAlternativeTitle": "Versi alternatif tersedia",

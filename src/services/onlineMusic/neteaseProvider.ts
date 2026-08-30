@@ -275,23 +275,33 @@ export const neteaseProvider: OnlineMusicProvider = {
             // freeTrialInfo but still only yield the ~40s preview.
             const isTrialOnly = rawUrl && (raw?.freeTrialInfo != null || isNeteaseTrialAudioUrl(String(rawUrl)));
             if ((!rawUrl || isTrialOnly) && options?.allowUnlock) {
+                const id = toNeteaseId(song.id);
+                let unlockUrl: string | null = null;
                 try {
-                    const unblockResponse = await neteaseApi.getSongUrl(toNeteaseId(song.id), level, { unblock: true });
-                    const unblockRaw = unblockResponse?.data?.[0];
-                    const unblockUrl = unblockRaw?.url;
-                    if (unblockUrl) {
-                        console.log(`[NeteaseProvider] unblock source for song ${song.id}: ${String(unblockUrl).slice(0, 90)}...`);
-                        return {
-                            url: String(unblockUrl).replace(/^http:/, 'https:'),
-                            fetchedAt: Date.now(),
-                            quality,
-                            unlocked: { from: 'netease-unblock' },
-                        };
-                    }
+                    const unblockResponse = await neteaseApi.getSongUrl(id, level, { unblock: true });
+                    unlockUrl = unblockResponse?.data?.[0]?.url ?? null;
                 } catch (error) {
-                    // The backend may not implement unblock (plain NeteaseCloudMusicApi) or may be
-                    // rate-limited by third-party matchers; keep the standard result semantics.
                     console.warn('[NeteaseProvider] unblock attempt failed for song', song.id, error);
+                }
+                // 第二通道：/song/url/match（解灰端点，同 matchID 但独立路径），
+                // 覆盖 unblock=true 分支自身异常或部署差异的情况。
+                if (!unlockUrl) {
+                    try {
+                        const matchResponse = await neteaseApi.getMatchedUrl(id);
+                        const matchUrl = matchResponse?.data;
+                        unlockUrl = typeof matchUrl === 'string' && matchUrl ? matchUrl : null;
+                    } catch (error) {
+                        console.warn('[NeteaseProvider] unblock match attempt failed for song', song.id, error);
+                    }
+                }
+                if (unlockUrl) {
+                    console.log(`[NeteaseProvider] unblock source for song ${song.id}: ${String(unlockUrl).slice(0, 90)}...`);
+                    return {
+                        url: String(unlockUrl).replace(/^http:/, 'https:'),
+                        fetchedAt: Date.now(),
+                        quality,
+                        unlocked: { from: 'netease-unblock' },
+                    };
                 }
             }
             if (!rawUrl) return null;
