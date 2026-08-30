@@ -20,6 +20,7 @@ vi.mock('@/services/netease', () => ({
         getPersonalizedPlaylists: vi.fn(),
         checkQr: vi.fn(),
         sendLoginCaptcha: vi.fn(),
+        verifyLoginCaptcha: vi.fn(),
         loginByPhoneCaptcha: vi.fn(),
     },
 }));
@@ -287,7 +288,8 @@ describe('neteaseProvider', () => {
         await expect(neteaseProvider.auth!.sendLoginCaptcha!('13800138000')).resolves.toEqual({ ok: false, error: '操作频繁' });
     });
 
-    it('logs in with phone + captcha and returns the normalized user', async () => {
+    it('logs in with phone + captcha after verifying the code and returns the normalized user', async () => {
+        vi.mocked(neteaseApi.verifyLoginCaptcha).mockResolvedValue({ code: 200 } as any);
         vi.mocked(neteaseApi.loginByPhoneCaptcha).mockResolvedValue({
             code: 200,
             cookie: 'MUSIC_U=abc; __csrf=123',
@@ -299,15 +301,26 @@ describe('neteaseProvider', () => {
             nickname: '歌者',
             vipType: 11,
         });
+        expect(neteaseApi.verifyLoginCaptcha).toHaveBeenCalledWith('13800138000', '123456');
+        expect(neteaseApi.loginByPhoneCaptcha).toHaveBeenCalledWith('13800138000', '123456');
     });
 
-    it('throws a provider error with the server message when the captcha is wrong', async () => {
-        vi.mocked(neteaseApi.loginByPhoneCaptcha).mockResolvedValue({ code: 400, message: '验证码错误' } as any);
+    it('throws with the server message when the captcha verification fails', async () => {
+        vi.mocked(neteaseApi.verifyLoginCaptcha).mockResolvedValue({ code: 400, message: '验证码错误' } as any);
 
         await expect(neteaseProvider.auth!.loginByPhoneCaptcha!('13800138000', '000000')).rejects.toThrow('验证码错误');
+        expect(neteaseApi.loginByPhoneCaptcha).not.toHaveBeenCalled();
+    });
+
+    it('throws with the server message when the login is rejected after a valid captcha', async () => {
+        vi.mocked(neteaseApi.verifyLoginCaptcha).mockResolvedValue({ code: 200 } as any);
+        vi.mocked(neteaseApi.loginByPhoneCaptcha).mockResolvedValue({ code: 403, message: '当前登录存在安全风险，请稍后再试' } as any);
+
+        await expect(neteaseProvider.auth!.loginByPhoneCaptcha!('13800138000', '123456')).rejects.toThrow('当前登录存在安全风险，请稍后再试');
     });
 
     it('throws when the login response carries no profile', async () => {
+        vi.mocked(neteaseApi.verifyLoginCaptcha).mockResolvedValue({ code: 200 } as any);
         vi.mocked(neteaseApi.loginByPhoneCaptcha).mockResolvedValue({ code: 200, cookie: '' } as any);
 
         await expect(neteaseProvider.auth!.loginByPhoneCaptcha!('13800138000', '123456')).rejects.toThrow();

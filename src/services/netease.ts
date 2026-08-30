@@ -524,6 +524,11 @@ export const neteaseApi = {
     return fetchWithCreds(`/captcha/sent?phone=${encodeURIComponent(phone)}`);
   },
 
+  // 校验短信验证码（网易云新版要求登录前先通过校验，跳过易触发「安全风险」风控）
+  verifyLoginCaptcha: async (phone: string, captcha: string) => {
+    return fetchWithCreds(`/captcha/verify?phone=${encodeURIComponent(phone)}&captcha=${encodeURIComponent(captcha)}`);
+  },
+
   loginByPhoneCaptcha: async (phone: string, captcha: string) => {
     const res = await fetchWithCreds(`/login/cellphone?phone=${encodeURIComponent(phone)}&captcha=${encodeURIComponent(captcha)}`);
     // 与扫码登录 803 一致：登录响应携带的 cookie（含 MUSIC_U）即登录态，写入 provider session。

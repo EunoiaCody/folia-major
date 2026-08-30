@@ -373,12 +373,19 @@ export const neteaseProvider: OnlineMusicProvider = {
             return { ok, error };
         },
         async loginByPhoneCaptcha(phone, captcha) {
+            // 网易云新版验证码登录必须先通过 /captcha/verify 校验，直接登录易触发
+            // 「当前登录存在安全风险」风控；校验失败时透传服务端 message（如验证码错误）。
+            const verifyRes = await neteaseApi.verifyLoginCaptcha(phone, captcha);
+            if (verifyRes?.code !== 200) {
+                const verifyMessage = verifyRes?.message ?? verifyRes?.msg ?? 'captcha verify failed';
+                throw new OnlineProviderError('auth-required', String(verifyMessage), 'netease');
+            }
             const response = await neteaseApi.loginByPhoneCaptcha(phone, captcha);
             const profile = response?.data?.profile ?? response?.profile;
             if (response?.code === 200 && profile) {
                 return normalizeUser(profile);
             }
-            // 验证码错误（code 400/403）等服务端拒绝时，把服务端 message 透传给 UI。
+            // 验证码错误（code 400/503）或风控（如「当前登录存在安全风险」403）等服务端拒绝时，把服务端 message 透传给 UI。
             const message = response?.message ?? response?.msg ?? 'phone login failed';
             throw new OnlineProviderError('auth-required', String(message), 'netease');
         },
