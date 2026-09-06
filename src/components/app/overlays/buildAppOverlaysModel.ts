@@ -4,10 +4,16 @@ import type FloatingPlayerControls from '../../FloatingPlayerControls';
 import type SearchWorkspace from '../search/SearchWorkspace';
 import type DevDebugOverlay from '../../DevDebugOverlay';
 import type MemoryMonitorWindow from '../../debug/MemoryMonitorWindow';
+import type NowPlayingToast from './NowPlayingToast';
 import { PlayerState } from '../../../types';
 import type { SongResult, UnifiedSong, LyricData } from '../../../types';
 import { resolvePlaybackNeighbors } from '../../../utils/playbackNeighbors';
 import { getPlaybackSongKey } from '../../../utils/appPlaybackGuards';
+import { getSongArtistLabel } from '../../../services/onlineMusic/songMetadata';
+import { setPlayerState } from '../../../stores/usePlaybackStore';
+import { setIsDevDebugOverlayVisible, setIsMemoryMonitorVisible } from '../../../stores/useAppChromeStore';
+import type { SlotContextFromApp } from '../../FloatingPlayerControls';
+import type { PlayerControlSlotActionId } from '../../../types/playerControlSlots';
 
 // src/components/app/overlays/buildAppOverlaysModel.ts
 
@@ -15,19 +21,63 @@ type SearchOverlayProps = React.ComponentProps<typeof SearchWorkspace>;
 type FloatingControlsProps = React.ComponentProps<typeof FloatingPlayerControls>;
 type DebugOverlayProps = React.ComponentProps<typeof DevDebugOverlay>;
 type MemoryMonitorProps = React.ComponentProps<typeof MemoryMonitorWindow>;
+type NowPlayingToastProps = React.ComponentProps<typeof NowPlayingToast>;
 
 export type AppOverlaysModel = {
     searchOverlay?: SearchOverlayProps | null;
     debugOverlay?: DebugOverlayProps | null;
     memoryMonitor?: MemoryMonitorProps | null;
     floatingControls?: FloatingControlsProps | null;
+    nowPlayingToast?: NowPlayingToastProps | null;
 };
 
-type BuildAppOverlaysModelParams = {
+// What the model needs that this file can read for itself: store state, the per-frame motion
+// signals, and its own translated labels. Keeping these out of the caller's argument list is the
+// whole point of useAppOverlaysModel below - App.tsx had to name all 25 of them.
+type AppOverlaysAmbient = {
+
     currentView: FloatingControlsProps['currentView'];
     isSearchOpen: boolean;
-    theme: any;
     isDaylight: boolean;
+    isDevDebugOverlayVisible: boolean;
+    isMemoryMonitorVisible: boolean;
+    memoryMonitorShortcutLabel: string;
+    currentTime: MotionValue<number>;
+    lyricCurrentTime: MotionValue<number>;
+    currentSong: SongResult | null;
+    playerState: PlayerState;
+    duration: number;
+    audioSrc: string | null;
+    lyrics: LyricData | null;
+    activePlaybackContext: 'main' | 'stage';
+    isPlayerChromeHidden: boolean;
+    noTrackText: string;
+    playQueue: SongResult[];
+    isFmMode: boolean;
+    prevTrackLabel: string;
+    nextTrackLabel: string;
+    /**
+     * now playing 卡片（playing-toast 样式）的封面。
+     *
+     * 混音期间必须和上面的 `currentSong` 描述同一首歌，所以调用方传的是冻结画面里的那张，不是实时的。
+     * 也不要在这儿补 `cachedCoverUrl` 兜底：混音中冻结封面为 null 是「这首歌本来就没有封面」的合法
+     * 取值，退回实时缓存等于把下一首的封面贴到上一首的标题下面。
+     */
+    coverUrl: string | null;
+    stageTrackPillMode: 'auto' | 'always' | 'never';
+    stageTrackPillTimeoutSec: number;
+    /** 卡片上的两种动作各自的无障碍名字 */
+    stageTrackPillOpenPlayerLabel: string;
+    stageTrackPillOpenSongCardLabel: string;
+    playerControlSlotPrimary: PlayerControlSlotActionId;
+    playerControlSlotSecondary: PlayerControlSlotActionId;
+    playerControlSlotContext: SlotContextFromApp;
+    onCommitPlayerBottomBarOffset: (offsetPx: number) => void;
+};
+
+// What only the caller can supply: controller callbacks and values App.tsx computes.
+export type AppOverlaysDeps = {
+    theme: any;
     closeSearchView: () => void;
     handleSearchOverlaySubmit: SearchOverlayProps['onSubmitSearch'];
     handleSearchLoadMore: () => Promise<void>;
@@ -35,43 +85,38 @@ type BuildAppOverlaysModelParams = {
     handleSearchResultAddToQueue: (track: UnifiedSong) => void;
     handleSearchResultArtistOpen: SearchOverlayProps['onOpenArtist'];
     handleSearchResultAlbumOpen: SearchOverlayProps['onOpenAlbum'];
-    isDevDebugOverlayVisible: boolean;
-    setIsDevDebugOverlayVisible: (visible: boolean) => void;
-    isMemoryMonitorVisible: boolean;
-    setIsMemoryMonitorVisible: (visible: boolean) => void;
-    memoryMonitorShortcutLabel: string;
     devDebugSnapshot: any;
-    currentTime: MotionValue<number>;
-    lyricCurrentTime: MotionValue<number>;
-    currentSong: SongResult | null;
-    playerState: PlayerState;
-    duration: number;
     effectiveLoopMode: 'off' | 'all' | 'one';
-    audioSrc: string | null;
     canToggleCurrentPlayback: boolean;
     isNowPlayingControlDisabled: boolean;
-    lyrics: LyricData | null;
-    activePlaybackContext: 'main' | 'stage';
     stageActiveEntryKind: string | null;
     syncStageLyricsClock: (timeSec: number, endTimeSec: number, nextPlayerState: PlayerState, startTimeSec?: number) => void;
     stageLyricsClockRef: React.MutableRefObject<{ startTimeSec: number }>;
-    setPlayerState: React.Dispatch<React.SetStateAction<PlayerState>>;
     togglePlay: FloatingControlsProps['onTogglePlay'];
     toggleLoop: FloatingControlsProps['onToggleLoop'];
     navigateToPlayer: () => void;
-    isPlayerChromeHidden: boolean;
     shouldHidePlayerProgressBar: boolean;
     onSeekMainAudio: (time: number) => void;
     onStagePlayerSeek: () => Promise<unknown>;
-    noTrackText: string;
-    playQueue: SongResult[];
-    isFmMode: boolean;
     isNowPlayingStageActive: boolean;
     handlePrevTrack: () => void;
     handleNextTrack: () => void;
-    prevTrackLabel: string;
-    nextTrackLabel: string;
+    shuffleQueue: () => void;
+    handleLike: () => void;
+    isDisplaySongLiked: boolean;
+    invokeCommandById: (commandId: string) => void;
+    canInvokeCommandById: (commandId: string) => boolean;
+    /** 自动切歌预览（下一首）；isNextUp 时整卡展示它 */
+    stageNextUp: { title: string; artist: string | null; coverUrl: string | null } | null;
+    /** 预览态：接下来播放标签 + 挂起 auto 隐藏计时 */
+    stageIsNextUp: boolean;
+    /** 当前页面 + 显示模式允许卡片在场（歌词页总是，首页看设置）；App 里算好的单一来源 */
+    stageTrackPillOnScreen: boolean;
+    /** 点卡片时展开右侧面板的歌曲卡片（切到 cover 页并打开） */
+    openSongCardPanel: () => void;
 };
+
+type BuildAppOverlaysModelParams = AppOverlaysAmbient & AppOverlaysDeps;
 
 // Builds the full overlay model, including detail overlays and floating playback controls.
 export const buildAppOverlaysModel = ({
@@ -87,9 +132,7 @@ export const buildAppOverlaysModel = ({
     handleSearchResultArtistOpen,
     handleSearchResultAlbumOpen,
     isDevDebugOverlayVisible,
-    setIsDevDebugOverlayVisible,
     isMemoryMonitorVisible,
-    setIsMemoryMonitorVisible,
     memoryMonitorShortcutLabel,
     devDebugSnapshot,
     currentTime,
@@ -106,7 +149,6 @@ export const buildAppOverlaysModel = ({
     stageActiveEntryKind,
     syncStageLyricsClock,
     stageLyricsClockRef,
-    setPlayerState,
     togglePlay,
     toggleLoop,
     navigateToPlayer,
@@ -122,7 +164,43 @@ export const buildAppOverlaysModel = ({
     handleNextTrack,
     prevTrackLabel,
     nextTrackLabel,
+    coverUrl,
+    stageTrackPillMode,
+    stageTrackPillTimeoutSec,
+    stageNextUp,
+    stageIsNextUp,
+    stageTrackPillOnScreen,
+    openSongCardPanel,
+    stageTrackPillOpenPlayerLabel,
+    stageTrackPillOpenSongCardLabel,
+    playerControlSlotPrimary,
+    playerControlSlotSecondary,
+    playerControlSlotContext,
+    onCommitPlayerBottomBarOffset,
 }: BuildAppOverlaysModelParams): AppOverlaysModel => ({
+    // Gated on stageTrackPillOnScreen (computed in App: display mode plus which page allows the
+    // card) rather than on the view directly, so the countdown that feeds the "up next" preview
+    // and the card that shows it can never disagree about where the card lives.
+    nowPlayingToast: stageTrackPillOnScreen && currentSong
+        ? {
+            song: {
+                title: currentSong.name || '',
+                artist: getSongArtistLabel(currentSong) || null,
+                coverUrl: coverUrl || null,
+            },
+            trackKey: getPlaybackSongKey(currentSong),
+            isDaylight,
+            mode: stageTrackPillMode,
+            timeoutSec: stageTrackPillTimeoutSec,
+            nextUp: stageNextUp,
+            isNextUp: stageIsNextUp,
+            theme,
+            onActivate: currentView === 'home' ? navigateToPlayer : openSongCardPanel,
+            activateLabel: currentView === 'home'
+                ? stageTrackPillOpenPlayerLabel
+                : stageTrackPillOpenSongCardLabel,
+        }
+        : null,
     searchOverlay: currentView === 'home'
         ? {
             theme,
@@ -198,6 +276,10 @@ export const buildAppOverlaysModel = ({
             isDaylight,
             isHidden: currentView === 'player' && isPlayerChromeHidden,
             hideControlBar: shouldHidePlayerProgressBar,
+            slotPrimary: playerControlSlotPrimary,
+            slotSecondary: playerControlSlotSecondary,
+            slotContext: playerControlSlotContext,
+            onCommitBottomBarOffset: onCommitPlayerBottomBarOffset,
             trackNavigation: ((): FloatingControlsProps['trackNavigation'] => {
                 const neighbors = resolvePlaybackNeighbors({
                     playQueue,

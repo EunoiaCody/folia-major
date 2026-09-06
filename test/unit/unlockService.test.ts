@@ -7,8 +7,8 @@ const getStateMock = vi.hoisted(() => vi.fn(() => ({
     unlockUseCrossProviderFallback: true,
 })));
 
-vi.mock('@/stores/useSettingsUiStore', () => ({
-    useSettingsUiStore: { getState: getStateMock },
+vi.mock('@/stores/useAudioSettingsStore', () => ({
+    useAudioSettingsStore: { getState: getStateMock },
 }));
 
 const omniGetAudioSourceMock = vi.hoisted(() => vi.fn());

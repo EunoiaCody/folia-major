@@ -4,7 +4,6 @@ import { PrefetchedSongData, isUrlValid, updatePrefetchedAudioUrl } from './pref
 import { isPureMusicLyricText } from '../utils/lyrics/pureMusic';
 import { migrateLyricDataRenderHints } from '../utils/lyrics/renderHints';
 import { loadOnlineLyricsState, markOnlineLyricsPureMusic, resolveOnlineLyrics, saveOnlineLyricsState } from '../utils/onlineLyricsState';
-import { useSettingsUiStore } from '../stores/useSettingsUiStore';
 import { autoMatchBestLyric } from '../utils/lyrics/autoMatchBestLyric';
 import { createSafeObjectUrl } from '../utils/blobGuards';
 import type { AudioQualityPreference, MediaId } from '../types/onlineMusic';
@@ -15,7 +14,8 @@ import { toSafePlaybackUrl, isNeteaseTrialAudioUrl } from '../utils/appPlaybackH
 import { getProviderSongMetadata } from './onlineMusic/songMetadata';
 import { isSongUnavailable } from './onlineMusic/songAvailability';
 import { resolveUnlockedAudioSource } from './unlockService';
-
+import { useAudioSettingsStore } from '../stores/useAudioSettingsStore';
+import { useLyricSettingsStore } from '../stores/useLyricSettingsStore';
 export async function loadOnlineSongAudioSource(
     song: SongResult,
     audioQuality: AudioQualityPreference,
@@ -44,7 +44,7 @@ export async function loadOnlineSongAudioSource(
         prefetched?.audioUrl
         && prefetched.audioUrl !== 'CACHED_IN_DB'
         && isUrlValid(prefetched.audioUrlFetchedAt)
-        && !(useSettingsUiStore.getState().unlockVipSongs && isNeteaseTrialAudioUrl(prefetched.audioUrl))
+        && !(useAudioSettingsStore.getState().unlockVipSongs && isNeteaseTrialAudioUrl(prefetched.audioUrl))
     ) {
         return {
             kind: 'ok',
@@ -57,7 +57,7 @@ export async function loadOnlineSongAudioSource(
     try {
         // 解锁编排：无版权歌由 unlockUnavailableSongs 控制，其余（VIP/试听）由 unlockVipSongs 控制，
         // 关闭时保持原有单 provider 标准请求语义。
-        const settings = useSettingsUiStore.getState();
+        const settings = useAudioSettingsStore.getState();
         const allowUnlock = isSongUnavailable(song)
             ? settings.unlockUnavailableSongs
             : settings.unlockVipSongs;
@@ -101,7 +101,7 @@ export async function loadOnlineSongLyrics(
     const { isCurrent, onLyrics, onPureMusicChange, onStateChange, onAutoMatchStart, onDone } = callbacks;
     const lyricCacheKey = getSongResourceCacheKey('lyric', song);
     const onlineLyricsState = await loadOnlineLyricsState(song);
-    const initialSettings = useSettingsUiStore.getState();
+  const initialSettingsLyricSettings = useLyricSettingsStore.getState();
 
     if (!isCurrent()) return;
     onStateChange?.(onlineLyricsState);
@@ -111,7 +111,7 @@ export async function loadOnlineSongLyrics(
     const preferredCachedLyrics = resolveOnlineLyrics(onlineLyricsState, cachedLyrics);
     const hasAuthoritativeLyricsSelection = onlineLyricsState?.lyricsSource === 'imported'
         || Boolean(onlineLyricsState?.hasOnlineOverride);
-    if (preferredCachedLyrics && (hasAuthoritativeLyricsSelection || !initialSettings.autoUseBestLyric)) {
+    if (preferredCachedLyrics && (hasAuthoritativeLyricsSelection || !initialSettingsLyricSettings.autoUseBestLyric)) {
         const cachedText = preferredCachedLyrics.lines.map(line => line.fullText).join('\n');
         onPureMusicChange?.(
             onlineLyricsState?.lyricsSource === 'online' && typeof onlineLyricsState.matchedIsPureMusic === 'boolean'
@@ -124,7 +124,7 @@ export async function loadOnlineSongLyrics(
     }
 
     if (prefetched?.lyricRaw?.isPureMusic && !prefetched.lyrics
-        && (hasAuthoritativeLyricsSelection || !initialSettings.autoUseBestLyric)) {
+        && (hasAuthoritativeLyricsSelection || !initialSettingsLyricSettings.autoUseBestLyric)) {
         onPureMusicChange?.(true);
         onLyrics(null);
         onDone();
@@ -135,8 +135,8 @@ export async function loadOnlineSongLyrics(
         const preferredPrefetchedLyrics = resolveOnlineLyrics(onlineLyricsState, prefetched.lyrics);
         const effectiveLyrics = preferredPrefetchedLyrics ?? prefetched.lyrics;
 
-        const settings = useSettingsUiStore.getState();
-        const shouldAutoMatch = settings.autoUseBestLyric && !onlineLyricsState?.hasOnlineOverride;
+  const settingsLyricSettings = useLyricSettingsStore.getState();
+        const shouldAutoMatch = settingsLyricSettings.autoUseBestLyric && !onlineLyricsState?.hasOnlineOverride;
 
         if (!shouldAutoMatch) {
             const effectiveText = effectiveLyrics?.lines.map(line => line.fullText).join('\n') ?? '';
@@ -179,8 +179,8 @@ export async function loadOnlineSongLyrics(
     let resolvedLyrics = resolveOnlineLyrics(onlineLyricsState, parsedLyrics);
     let finalState = onlineLyricsState;
 
-    const settings = useSettingsUiStore.getState();
-    const shouldAutoMatch = settings.autoUseBestLyric && !onlineLyricsState?.hasOnlineOverride;
+  const settingsLyricSettings = useLyricSettingsStore.getState();
+    const shouldAutoMatch = settingsLyricSettings.autoUseBestLyric && !onlineLyricsState?.hasOnlineOverride;
 
     if (shouldAutoMatch) {
         // The lyrics in hand are already displayable, so hand them over and report done BEFORE the
@@ -199,7 +199,7 @@ export async function loadOnlineSongLyrics(
             const artistName = metadata.artists.map(a => a.name).join(', ');
             const bestMatch = await autoMatchBestLyric(song.name, artistName, metadata.durationMs, {
                 album: metadata.album?.name,
-                preferredSource: settings.preferredAlternativeLyricSource,
+                preferredSource: settingsLyricSettings.preferredAlternativeLyricSource,
                 providerCandidate: song.sourceRef?.kind === 'online'
                     && (song.sourceRef.providerId === 'netease' || song.sourceRef.providerId === 'kugou' || song.sourceRef.providerId === 'qq')
                     ? {

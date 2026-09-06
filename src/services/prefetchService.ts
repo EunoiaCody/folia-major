@@ -8,7 +8,6 @@
 import { ReplayGainInfo, SongResult, LyricData, OnlineLyricsState, type LyricProviderSource } from '../types';
 import { migrateLyricDataRenderHints } from '../utils/lyrics/renderHints';
 import { isPureMusicLyricText } from '../utils/lyrics/pureMusic';
-import { useSettingsUiStore } from '../stores/useSettingsUiStore';
 import { autoMatchBestLyric } from '../utils/lyrics/autoMatchBestLyric';
 import { loadOnlineLyricsState, markOnlineLyricsPureMusic, resolveOnlineLyrics, saveOnlineLyricsState } from '../utils/onlineLyricsState';
 import type { AudioQualityPreference, MediaId } from '../types/onlineMusic';
@@ -22,6 +21,9 @@ import { isSongUnavailable } from './onlineMusic/songAvailability';
 import { resolveUnlockedAudioSource } from './unlockService';
 import { ensureTrackProfile, setAnalysisScope } from './automix/profileService';
 import { modeNeedsBeatGrid } from './automix/transitionStrategy';
+import { useLyricSettingsStore } from '../stores/useLyricSettingsStore';
+import { useAutomixSettingsStore } from '../stores/useAutomixSettingsStore';
+import { useAudioSettingsStore } from '../stores/useAudioSettingsStore';
 
 // Prefetch configuration
 //
@@ -47,7 +49,9 @@ const MAX_PREFETCH_CACHE_SIZE = 200; // Evict least recently used entries beyond
  * try to fetch. Never awaited: a slow decode must not hold up the song after this one.
  */
 const analyseForAutomix = (song: SongResult, audioUrl: string | null | undefined) => {
-    const settings = useSettingsUiStore.getState();
+  const settingsAudioSettings = useAudioSettingsStore.getState();
+  const settingsAutomixSettings = useAutomixSettingsStore.getState();
+  const settingsLyricSettings = useLyricSettingsStore.getState();
     // Nothing reads a profile while blending is switched off, and this is not a cheap thing to
     // produce for nobody: the whole file is read, decoded, and put through the beat model in the
     // inference process - per prefetched track, and a prefetch pass covers three of them. Blending
@@ -64,12 +68,12 @@ const analyseForAutomix = (song: SongResult, audioUrl: string | null | undefined
     // than restated here. It was restated here once: crossfade ran the model on every prefetched
     // track and threw the answer away, because a comment in this file said crossfade did "beat
     // alignment" and nothing next to the planner could contradict it.
-    if (!settings.automixEnabled) return;
+    if (!settingsAutomixSettings.automixEnabled) return;
     void ensureTrackProfile({
         song,
         audioUrl: audioUrl === 'CACHED_IN_DB' ? null : audioUrl ?? null,
-        enableMediaCache: settings.enableMediaCache,
-        wantGrid: modeNeedsBeatGrid(settings.transitionMode),
+        enableMediaCache: settingsAudioSettings.enableMediaCache,
+        wantGrid: modeNeedsBeatGrid(settingsAutomixSettings.transitionMode),
     });
 };
 
@@ -184,9 +188,11 @@ const prefetchSong = async (
     if (existing?.audioUrl && existing.audioUrl !== 'CACHED_IN_DB') {
         existing.audioUrl = toSafePlaybackUrl(existing.audioUrl) ?? null;
     }
-    const currentSettings = useSettingsUiStore.getState();
-    const lyricPreferenceMatches = !currentSettings.autoUseBestLyric
-        || existing?.lyricPreferenceSource === currentSettings.preferredAlternativeLyricSource;
+  const currentSettingsLyricSettings = useLyricSettingsStore.getState();
+    // 解锁开关宿主在 useAudioSettingsStore；预取时同步读一次，供下方解锁编排判断。
+    const currentSettings = useAudioSettingsStore.getState();
+    const lyricPreferenceMatches = !currentSettingsLyricSettings.autoUseBestLyric
+        || existing?.lyricPreferenceSource === currentSettingsLyricSettings.preferredAlternativeLyricSource;
     if (existing && lyricPreferenceMatches && existing.audioUrl && isUrlValid(existing.audioUrlFetchedAt) && (existing.lyrics || existing.lyricRaw?.isPureMusic)) {
         console.log(`[Prefetch] Already cached: ${song.name}`);
         touchPrefetchCacheEntry(songKey, existing);
@@ -252,8 +258,8 @@ const prefetchSong = async (
                 // The same stamp the fetched path leaves below. Without it a track whose lyrics came
                 // from the cache can never satisfy the "already cached" test at the top of this
                 // function, so every prefetch pass re-enters the whole thing for it.
-                data.lyricPreferenceSource = currentSettings.autoUseBestLyric
-                    ? currentSettings.preferredAlternativeLyricSource
+                data.lyricPreferenceSource = currentSettingsLyricSettings.autoUseBestLyric
+                    ? currentSettingsLyricSettings.preferredAlternativeLyricSource
                     : null;
             } else if (!signal.aborted) {
                 const lyricResult = await omni.getLyrics(song, { userId });
@@ -278,9 +284,11 @@ const prefetchSong = async (
                 const onlineLyricsState = await loadOnlineLyricsState(song);
                 const resolvedLyrics = resolveOnlineLyrics(onlineLyricsState, parsedLyrics);
 
-                const settings = useSettingsUiStore.getState();
-                const autoUseBest = settings.autoUseBestLyric;
-                const preferredSource = settings.preferredAlternativeLyricSource;
+  const settingsAudioSettings = useAudioSettingsStore.getState();
+  const settingsAutomixSettings = useAutomixSettingsStore.getState();
+  const settingsLyricSettings = useLyricSettingsStore.getState();
+                const autoUseBest = settingsLyricSettings.autoUseBestLyric;
+                const preferredSource = settingsLyricSettings.preferredAlternativeLyricSource;
                 const shouldAutoMatch = autoUseBest && !onlineLyricsState?.hasOnlineOverride;
 
                 if (shouldAutoMatch) {
@@ -289,7 +297,7 @@ const prefetchSong = async (
                         const artistName = metadata.artists.map(a => a.name).join(', ');
                         const bestMatch = await autoMatchBestLyric(song.name, artistName, metadata.durationMs, {
                             album: metadata.album?.name,
-                            preferredSource: settings.preferredAlternativeLyricSource,
+                            preferredSource: settingsLyricSettings.preferredAlternativeLyricSource,
                             ...(sourceRef.providerId === 'netease' || sourceRef.providerId === 'kugou' || sourceRef.providerId === 'qq'
                                 ? { providerCandidate: {
                                     providerId: sourceRef.providerId as 'netease' | 'kugou' | 'qq',

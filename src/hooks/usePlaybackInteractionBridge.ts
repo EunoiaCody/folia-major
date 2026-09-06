@@ -5,10 +5,17 @@ import { omni } from '../services/onlineMusic/omni';
 import { PlayerState } from '../types';
 import type { ReplayGainMode, SongResult, StageLoopMode, StatusMessage } from '../types';
 import { getReplayGainModeLabel } from '../utils/appPlaybackHelpers';
+import { isMacPlatform as isMac } from '../utils/platform';
+import { setStatusMessage as setStatusMsg } from '../stores/useStatusMessageStore';
+import { setReplayGainMode } from '../stores/usePlaybackStore';
+import { useStableActionSurface } from './useStableCallbacks';
+import { selectDisplayDuration, usePlaybackStore } from '../stores/usePlaybackStore';
+import { setIsPanelOpen, useAppViewStore } from '../stores/useAppViewStore';
+import { setIsDevDebugOverlayVisible, setIsMemoryMonitorVisible } from '../stores/useAppChromeStore';
+import { useAudioSettingsStore } from '../stores/useAudioSettingsStore';
+import { currentTime } from '../stores/motionSignals';
 
 // src/hooks/usePlaybackInteractionBridge.ts
-
-const isMac = typeof navigator !== 'undefined' && navigator.userAgent.toLowerCase().includes('mac');
 
 type PlayerEscapeAction = 'ignore' | 'allow-fullscreen-exit' | 'close-panel' | 'navigate-back';
 
@@ -31,17 +38,8 @@ export const resolvePlayerEscapeAction = ({
 };
 
 type UsePlaybackInteractionBridgeParams = {
-    currentSong: SongResult | null;
-    currentView: string;
-    audioSrc: string | null;
-    activePlaybackContext: 'main' | 'stage';
     stageActiveEntryKind: string | null;
     isNowPlayingStageActive: boolean;
-    isPanelOpen: boolean;
-    isFmMode: boolean;
-    playerState: PlayerState;
-    duration: number;
-    currentTime: MotionValue<number>;
     audioRef: React.RefObject<HTMLAudioElement | null>;
     /**
      * Whether an automix blend is sounding, which settles play-vs-pause on its own.
@@ -69,15 +67,9 @@ type UsePlaybackInteractionBridgeParams = {
         baseTimeSec: number;
         startedAtMs: number | null;
     }>;
-    setIsDevDebugOverlayVisible: React.Dispatch<React.SetStateAction<boolean>>;
-    setIsMemoryMonitorVisible: React.Dispatch<React.SetStateAction<boolean>>;
     cyclePlayerChromeVisibilityMode: () => void;
-    setIsPanelOpen: React.Dispatch<React.SetStateAction<boolean>>;
-    setReplayGainMode: React.Dispatch<React.SetStateAction<ReplayGainMode>>;
-    setStatusMsg: React.Dispatch<React.SetStateAction<StatusMessage | null>>;
     handleNextTrack: () => Promise<void> | void;
     handlePrevTrack: () => void;
-    handleToggleLoopMode: () => void;
     navigateBackFromPlayer: () => void;
     pausePlayback: () => void;
     resumePlayback: () => Promise<void>;
@@ -86,35 +78,33 @@ type UsePlaybackInteractionBridgeParams = {
 
 // Bridges playback-related keyboard and click interactions without leaving them inline in App.tsx.
 export function usePlaybackInteractionBridge({
-    currentSong,
-    currentView,
-    audioSrc,
-    activePlaybackContext,
     stageActiveEntryKind,
     isNowPlayingStageActive,
-    isPanelOpen,
-    isFmMode,
-    playerState,
-    duration,
-    currentTime,
     audioRef,
     isTransitionAudible,
     seekDuringTransition,
     stageLyricsClockRef,
-    setIsDevDebugOverlayVisible,
-    setIsMemoryMonitorVisible,
     cyclePlayerChromeVisibilityMode,
-    setIsPanelOpen,
-    setReplayGainMode,
-    setStatusMsg,
     handleNextTrack,
     handlePrevTrack,
-    handleToggleLoopMode,
     navigateBackFromPlayer,
     pausePlayback,
     resumePlayback,
     syncStageLyricsClock,
 }: UsePlaybackInteractionBridgeParams) {
+    // Read here rather than passed in: all store fields or a module-level motion signal.
+    const currentView = useAppViewStore(state => state.view);
+    const isPanelOpen = useAppViewStore(state => state.isPanelOpen);
+    const currentSong = usePlaybackStore(state => state.currentSong);
+    const audioSrc = usePlaybackStore(state => state.audioSrc);
+    const activePlaybackContext = usePlaybackStore(state => state.activePlaybackContext);
+    const isFmMode = usePlaybackStore(state => state.isFmMode);
+    const playerState = usePlaybackStore(state => state.playerState);
+    // The length of the track ON SCREEN. Mid-blend the raw duration already holds the ARRIVING
+    // track's, so clamping an arrow-key seek against it would land past the end of the one heard.
+    const duration = usePlaybackStore(selectDisplayDuration);
+    const handleToggleLoopMode = useAudioSettingsStore(state => state.handleToggleLoopMode);
+
     // resumePlayback rethrows after showing the error toast so awaiting callers can react, but
     // togglePlay is fire-and-forget: without this the rejection escapes as an unhandled promise
     // rejection with no media context. Log the element state that explains why play() failed
@@ -218,10 +208,15 @@ export function usePlaybackInteractionBridge({
                 document.querySelector('[data-folia-keyboard-window="true"]')
             );
 
+            // Both chords below open their window by toggling a boolean, so both have to refuse a
+            // held key: auto-repeat fires around thirty times a second, and a toggle driven by that
+            // lands open or closed on the parity of how long the keys were down. The Escape handler
+            // further down already refuses repeats, for its own reason.
+            //
             // Not gated on dev: the packaged desktop build has no DevTools to fall back on - the
             // window is frameless, so there is no menu to toggle them from and they only open
             // automatically under ELECTRON_DEV. This chord is the only console it has.
-            if (event.altKey && event.shiftKey && event.code === 'KeyD') {
+            if (event.altKey && event.shiftKey && !event.repeat && event.code === 'KeyD') {
                 event.preventDefault();
                 setIsDevDebugOverlayVisible(prev => !prev);
                 return;
@@ -230,7 +225,7 @@ export function usePlaybackInteractionBridge({
             // Its own window rather than a tab of the one above: the two are read together - a heap
             // that is flat while the working set climbs is the whole diagnosis - and a tab makes
             // that comparison impossible.
-            if (event.altKey && event.shiftKey && event.code === 'KeyM') {
+            if (event.altKey && event.shiftKey && !event.repeat && event.code === 'KeyM') {
                 event.preventDefault();
                 setIsMemoryMonitorVisible(prev => !prev);
                 return;
@@ -379,11 +374,14 @@ export function usePlaybackInteractionBridge({
         togglePlay,
     ]);
 
-    return {
+    // Wrapped so the callbacks this hook hands back keep one identity for the app's lifetime. They
+    // are all invoked from events or effects, and their churn was what kept every build*Model memo
+    // in App.tsx from ever holding - see useStableCallbacks.ts.
+    return useStableActionSurface({
         togglePlay,
         toggleLoop,
         handleChangeReplayGainMode,
         handleContainerClick,
         handleFmTrash,
-    };
+    });
 }

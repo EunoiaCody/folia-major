@@ -1,10 +1,11 @@
 import React, { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { motion, useMotionValue, animate, AnimatePresence, useDragControls } from 'framer-motion';
-import { ChevronLeft, Disc, Download, Play, Plus, Loader2, Heart, ListPlus, Pencil, Search, X, RefreshCw, Trash2, Star, Tags } from 'lucide-react';
+import { ChevronLeft, Disc, Download, Play, Plus, Loader2, Heart, ListPlus, Pencil, X, RefreshCw, Trash2, Star, Tags } from 'lucide-react';
+import GridPanelToggleIndicator from './folia-grid/GridPanelToggleIndicator';
 import { useTranslation } from 'react-i18next';
 import { SongResult, type LocalSong, type StatusMessage, Theme, type UnifiedSong } from '../types';
 import { getSongUnavailableLabel, isSongUnavailable, shouldAutoReplaceUnavailableSong } from '../services/onlineMusic/songAvailability';
-import { useSettingsUiStore } from '../stores/useSettingsUiStore';
+import { useAudioSettingsStore } from '../stores/useAudioSettingsStore';
 import { getNavidromeConfig, navidromeApi } from '../services/navidromeService';
 import { formatSongName } from '../utils/songNameFormatter';
 import { getSizedCoverUrl } from '../utils/coverUrl';
@@ -27,7 +28,8 @@ import { SidePanelList, TrackListItem } from './shared/SidePanelList';
 import { GridListSearchButton } from './shared/GridListSearchButton';
 import { LocalTrackSortDirectionButton, LocalTrackSortMenu } from './shared/LocalTrackSortMenu';
 import { CustomSelect } from './shared/CustomSelect';
-import { gridSearchPanelMotion } from './shared/gridSearchPanelMotion';
+import { useGridCommandFilter } from '../hooks/useGridCommandFilter';
+import { openCommandFilter } from '../stores/useAppViewStore';
 import {
     appendUniqueByKey,
     deriveProgressiveLoadingState,
@@ -36,7 +38,7 @@ import {
 } from './folia-grid/progressiveGrid';
 import { useProgressiveItemEntrance } from './folia-grid/useProgressiveItemEntrance';
 import { useLocalCoverPreloader } from '../hooks/useLocalCoverPreloader';
-import { compareLocalFolderSongs, type LocalSongFolderSortDirection, type LocalSongFolderSortField } from '../utils/localSongSorting';
+import { compareLocalFolderSongs, formatLocalAlbumTrackLabel, type LocalAlbumGroupKey, type LocalSongFolderSortDirection, type LocalSongFolderSortField } from '../utils/localSongSorting';
 import { resolveGridViewContextTracks } from './folia-grid/gridViewContextActions';
 import {
     resolveGridTrackAlbumTargetId,
@@ -44,6 +46,7 @@ import {
 } from './folia-grid/gridTrackNavigation';
 import { canResolveSongCatalogRef } from '../services/onlineMusic/catalogRefs';
 import type { MediaId, ProviderCollection } from '../types/onlineMusic';
+import { useSidePanelBottomPx } from '../hooks/usePlayerBottomBarBottomPx';
 
 export interface GridViewSourceActions {
     local?: {
@@ -125,7 +128,7 @@ const LOCAL_TRACK_SORT_DIRECTION_STORAGE_KEY = 'local_track_sort_direction';
 
 const getStoredLocalTrackSortField = (): LocalSongFolderSortField => {
     const stored = localStorage.getItem(LOCAL_TRACK_SORT_FIELD_STORAGE_KEY);
-    return stored === 'fileLastModified' ? stored : 'fileName';
+    return stored === 'fileLastModified' || stored === 'albumTrack' ? stored : 'fileName';
 };
 
 const getStoredLocalTrackSortDirection = (): LocalSongFolderSortDirection => {
@@ -542,12 +545,11 @@ export const GridView: React.FC<GridViewProps> = ({
     isInteractive = true,
 }) => {
     const { t } = useTranslation();
+    const bottomBarPanelBottomPx = useSidePanelBottomPx();
     const containerRef = useRef<HTMLDivElement>(null);
     const dragControls = useDragControls();
     const [focusedIndex, setFocusedIndex] = useState(0);
     const focusedIndexRef = useRef(0);
-    const searchInputRef = useRef<HTMLInputElement | null>(null);
-    const isComposingSearchRef = useRef(false);
     const pendingFocusCommitTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const isDraggingRef = useRef(false);
     const pendingBackgroundTracksRef = useRef<SongResult[] | null>(null);
@@ -729,9 +731,16 @@ export const GridView: React.FC<GridViewProps> = ({
     const [isCreatePlaylistOpen, setIsCreatePlaylistOpen] = useState(false);
     const [showCutInPanel, setShowCutInPanel] = useState(false);
     const [showSidePanel, setShowSidePanel] = useState(false);
-    const [showSearchPanel, setShowSearchPanel] = useState(false);
-    const [draftSearchQuery, setDraftSearchQuery] = useState('');
     const [searchQuery, setSearchQuery] = useState('');
+    // The filter box is the command palette now; this grid only says who owns typing and where the
+    // box belongs. See useGridCommandFilter for why all three grids stopped carrying their own.
+    const isFiltering = useGridCommandFilter({
+        isInteractive,
+        query: searchQuery,
+        setQuery: setSearchQuery,
+        // The box used to be an absolutely positioned child of the canvas; it still is.
+        anchorRef: containerRef,
+    });
     const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('');
     const deferredSearchQuery = useDeferredValue(debouncedSearchQuery);
 
@@ -783,6 +792,32 @@ export const GridView: React.FC<GridViewProps> = ({
         && collection?.type !== 'playlist'
         && Boolean(sourceActions?.navidrome?.onAddToPlaylist || sourceActions?.navidrome?.onCreatePlaylist);
     const localSongsById = useMemo(() => new Map(localSongs?.map(song => [song.id, song])), [localSongs]);
+    // 专辑归属以本地曲库的专辑实体为准，不用文件里的专辑标签字面值：
+    // 用户重命名或合并实体后，显示轨道已经带上了实体的 entityId 和 displayName。
+    const localAlbumGroupBySongId = useMemo(() => {
+        const groups = new Map<string, LocalAlbumGroupKey>();
+        if (!supportsLocalTrackSorting) return groups;
+        baseDisplayTracks.forEach(track => {
+            const localRef = (track as UnifiedSong).localRef;
+            if (!localRef) return;
+            groups.set(localRef.songId, {
+                entityId: track.album?.entityId,
+                name: track.album?.name || '',
+            });
+        });
+        return groups;
+    }, [baseDisplayTracks, supportsLocalTrackSorting]);
+    const resolveLocalAlbumGroup = useCallback((song: LocalSong) => (
+        localAlbumGroupBySongId.get(song.id)
+    ), [localAlbumGroupBySongId]);
+    // 只有能选专辑号排序的本地列表才挂轨道号；本地歌单等自定义顺序的列表不属于这个语境。
+    const getAlbumTrackLabel = useCallback((track: SongResult): string | null => {
+        if (!supportsLocalTrackSorting) return null;
+        const localRef = (track as UnifiedSong).localRef;
+        if (!localRef) return null;
+        const localSong = localSongsById.get(localRef.songId);
+        return localSong ? formatLocalAlbumTrackLabel(localSong) : null;
+    }, [localSongsById, supportsLocalTrackSorting]);
     const displayTracks = useMemo(() => {
         const filteredTracks = baseDisplayTracks.filter((track, index) => (
             !removedExternalTrackKeys.has(`${getPlaybackSongKey(track)}-${index}`)
@@ -798,7 +833,13 @@ export const GridView: React.FC<GridViewProps> = ({
             const leftLocalSong = leftLocalRef ? localSongsById.get(leftLocalRef.songId) : undefined;
             const rightLocalSong = rightLocalRef ? localSongsById.get(rightLocalRef.songId) : undefined;
             if (!leftLocalSong || !rightLocalSong) return 0;
-            return compareLocalFolderSongs(leftLocalSong, rightLocalSong, localTrackSortField, localTrackSortDirection);
+            return compareLocalFolderSongs(
+                leftLocalSong,
+                rightLocalSong,
+                localTrackSortField,
+                localTrackSortDirection,
+                resolveLocalAlbumGroup,
+            );
         });
     }, [
         baseDisplayTracks,
@@ -807,6 +848,7 @@ export const GridView: React.FC<GridViewProps> = ({
         localTrackSortDirection,
         localTrackSortField,
         removedExternalTrackKeys,
+        resolveLocalAlbumGroup,
     ]);
 
     useEffect(() => {
@@ -876,9 +918,9 @@ export const GridView: React.FC<GridViewProps> = ({
 
             const pendingSearchQuery = pendingRestoreStateRef.current?.searchQuery ?? '';
             if (pendingSearchQuery) {
-                setShowSearchPanel(true);
-                setDraftSearchQuery(pendingSearchQuery);
                 setSearchQuery(pendingSearchQuery);
+                // 恢复出来的筛选也要把框带回来，否则网格是筛过的、屏幕上却没有任何说明。
+                openCommandFilter();
             }
         } catch {
             sessionStorage.removeItem(navigationStorageKey);
@@ -888,17 +930,9 @@ export const GridView: React.FC<GridViewProps> = ({
         }
     }, [lastIndexStorageKey, navigationStorageKey]);
 
-    useEffect(() => {
-        if (!showSearchPanel) return;
-        const id = requestAnimationFrame(() => {
-            searchInputRef.current?.focus();
-            searchInputRef.current?.setSelectionRange(draftSearchQuery.length, draftSearchQuery.length);
-        });
-        return () => cancelAnimationFrame(id);
-    }, [draftSearchQuery.length, showSearchPanel]);
-
+    // 无版权歌曲自动替代开启时，灰色歌曲不再被网格过滤掉，交给 shouldAutoReplaceUnavailableSong 决定能否替代播放。
     const playableTracks = useMemo(() => {
-        const replaceUnavailable = useSettingsUiStore.getState().unlockUnavailableSongs;
+        const replaceUnavailable = useAudioSettingsStore.getState().unlockUnavailableSongs;
         return displayTracks.filter(track => !isSongUnavailable(track) || (replaceUnavailable && shouldAutoReplaceUnavailableSong(track)));
     }, [displayTracks]);
     const handleSourceEditToggle = useCallback(async () => {
@@ -1694,7 +1728,9 @@ export const GridView: React.FC<GridViewProps> = ({
     useEffect(() => {
         if (!isInteractive) return;
 
-        const handleSearchTyping = (event: KeyboardEvent) => {
+        // Typing itself is the palette's now; what stays here is the Escape ladder, which is about
+        // this grid's own panels and has nothing to do with the filter box.
+        const handleEscape = (event: KeyboardEvent) => {
             const target = event.target;
             if (
                 target instanceof HTMLInputElement ||
@@ -1704,36 +1740,26 @@ export const GridView: React.FC<GridViewProps> = ({
                 return;
             }
 
-            if (event.key === 'Escape') {
-                event.preventDefault();
-                if (showSearchPanel) {
-                    setShowSearchPanel(false);
-                    setDraftSearchQuery('');
-                    setSearchQuery('');
-                } else if (showSidePanel) {
-                    setShowSidePanel(false);
-                } else if (showCutInPanel) {
-                    setShowCutInPanel(false);
-                } else {
-                    onBack();
-                }
+            if (event.key !== 'Escape') {
                 return;
             }
-
-            if (event.altKey || event.ctrlKey || event.metaKey) return;
-            if (event.key === 'Process' || event.key === 'Unidentified') {
-                setShowSearchPanel(true);
-                return;
-            }
-            if (event.key.length !== 1) return;
 
             event.preventDefault();
-            setShowSearchPanel(true);
+            // A filter still applied is the first thing Escape undoes, as it always was.
+            if (searchQuery) {
+                setSearchQuery('');
+            } else if (showSidePanel) {
+                setShowSidePanel(false);
+            } else if (showCutInPanel) {
+                setShowCutInPanel(false);
+            } else {
+                onBack();
+            }
         };
 
-        window.addEventListener('keydown', handleSearchTyping);
-        return () => window.removeEventListener('keydown', handleSearchTyping);
-    }, [isInteractive, onBack, showCutInPanel, showSearchPanel, showSidePanel]);
+        window.addEventListener('keydown', handleEscape);
+        return () => window.removeEventListener('keydown', handleEscape);
+    }, [isInteractive, onBack, searchQuery, showCutInPanel, showSidePanel]);
 
     useEffect(() => {
         updateRenderedIndexesForViewport(dragX.get(), dragY.get(), true);
@@ -1976,7 +2002,7 @@ export const GridView: React.FC<GridViewProps> = ({
                 if (
                     e.repeat
                     || isEditMode
-                    || showSearchPanel
+                    || isFiltering
                     || showSidePanel
                     || showCutInPanel
                     || isPlaylistPickerOpen
@@ -2046,8 +2072,8 @@ export const GridView: React.FC<GridViewProps> = ({
         onSelectCollection,
         onSelectTrack,
         persistNavigationState,
+        isFiltering,
         showCutInPanel,
-        showSearchPanel,
         showSidePanel,
     ]);
 
@@ -2061,6 +2087,8 @@ export const GridView: React.FC<GridViewProps> = ({
     const infoCollection = collectionDetail ? { ...collection, ...collectionDetail } : collection;
     const coverUrl = infoCollection?.coverUrl || '';
     const infoPanelCoverUrl = infoCollection?.coverUrl || '';
+    // 只有 tracks 模式下的合集才有切入面板，没有面板时标题不做成可点控件
+    const hasCutInPanel = mode === 'tracks' && Boolean(collection);
     const albumArtists = Array.isArray(infoCollection?.artists) ? infoCollection.artists : [];
     const albumAlias = infoCollection?.aliases?.[0];
     const albumPublishedAt = infoCollection?.publishedAt;
@@ -2128,11 +2156,10 @@ export const GridView: React.FC<GridViewProps> = ({
             {/* Center Clickable Area */}
             <div
                 onClick={() => {
-                    if (mode === 'tracks' && collection) {
-                        setShowCutInPanel(!showCutInPanel);
-                    }
+                    if (!hasCutInPanel) return;
+                    setShowCutInPanel(!showCutInPanel);
                 }}
-                className="absolute left-1/2 top-5 -translate-x-1/2 z-[70] text-center flex flex-col items-center select-none cursor-pointer hover:scale-[1.01] active:scale-98 transition-all px-5 py-2 rounded-2xl backdrop-blur-md"
+                className={`group/grid-title absolute left-1/2 top-5 -translate-x-1/2 z-[70] text-center flex flex-col items-center select-none transition-all px-5 py-2 rounded-2xl backdrop-blur-md ${hasCutInPanel ? 'cursor-pointer hover:scale-[1.01] active:scale-98' : ''}`}
                 style={{
                     backgroundColor: 'color-mix(in srgb, var(--bg-color) 20%, transparent)',
                     color: 'var(--text-primary)',
@@ -2140,11 +2167,7 @@ export const GridView: React.FC<GridViewProps> = ({
             >
                 <h2 className="text-lg font-bold tracking-tight flex items-center gap-1.5 justify-center">
                     {infoCollection?.name || collection?.name || title}
-                    {mode === 'tracks' && collection && (
-                        <span className="text-[9px] bg-zinc-500/20 text-current px-1.5 py-0.5 rounded-full font-normal opacity-60">
-                            {t(showCutInPanel ? 'ui.close' : 'ui.info')}
-                        </span>
-                    )}
+                    {hasCutInPanel && <GridPanelToggleIndicator isOpen={showCutInPanel} />}
                 </h2>
                 {(infoCollection?.description || subtitle) && (
                     <p className="mt-0.5 max-w-[min(40rem,calc(100vw-8rem))] text-xs leading-relaxed opacity-50 line-clamp-2 whitespace-normal break-words">
@@ -2185,65 +2208,6 @@ export const GridView: React.FC<GridViewProps> = ({
                 className="w-full flex-1 relative flex items-center justify-center cursor-grab active:cursor-grabbing overflow-hidden"
                 style={{ touchAction: 'none' }}
             >
-                <AnimatePresence>
-                    {showSearchPanel && (
-                        <motion.div
-                            {...gridSearchPanelMotion}
-                            className="absolute top-24 left-1/2 z-[85] w-[min(28rem,calc(100%-2rem))] -translate-x-1/2 pointer-events-auto"
-                        >
-                            <div className="relative rounded-full border shadow-2xl backdrop-blur-2xl theme-glass-panel">
-                                <Search className="absolute left-4 top-1/2 -translate-y-1/2 opacity-40 w-4 h-4" />
-                                <input
-                                    ref={searchInputRef}
-                                    type="text"
-                                    value={draftSearchQuery}
-                                    onChange={(event) => {
-                                        const nextValue = event.target.value;
-                                        setDraftSearchQuery(nextValue);
-                                        if (!isComposingSearchRef.current) {
-                                            setSearchQuery(nextValue);
-                                        }
-                                    }}
-                                    onCompositionStart={() => {
-                                        isComposingSearchRef.current = true;
-                                    }}
-                                    onCompositionEnd={(event) => {
-                                        isComposingSearchRef.current = false;
-                                        const nextValue = event.currentTarget.value;
-                                        setDraftSearchQuery(nextValue);
-                                        setSearchQuery(nextValue);
-                                    }}
-                                    onKeyDown={(event) => {
-                                        if (event.key === 'Escape') {
-                                            setShowSearchPanel(false);
-                                            setDraftSearchQuery('');
-                                            setSearchQuery('');
-                                        }
-                                    }}
-                                    placeholder={`${t('home.gridSearchPlaceholder')} (Esc)`}
-                                    className="w-full rounded-full bg-transparent py-3 pl-11 pr-11 text-sm font-medium outline-none placeholder:text-current placeholder:opacity-40"
-                                    style={{ color: 'var(--text-primary)' }}
-                                />
-                                <button
-                                    type="button"
-                                    onClick={() => {
-                                        if (draftSearchQuery) {
-                                            setDraftSearchQuery('');
-                                            setSearchQuery('');
-                                            searchInputRef.current?.focus();
-                                        } else {
-                                            setShowSearchPanel(false);
-                                        }
-                                    }}
-                                    className="absolute right-3 top-1/2 -translate-y-1/2 rounded-full p-1.5 opacity-45 transition-opacity hover:opacity-90 cursor-pointer"
-                                    aria-label={draftSearchQuery ? "Clear" : "Close"}
-                                >
-                                    <X size={15} />
-                                </button>
-                            </div>
-                        </motion.div>
-                    )}
-                </AnimatePresence>
                 {showLoading ? (
                     <div className="flex flex-col items-center gap-4 opacity-50">
                         <Loader2 className="animate-spin" size={32} />
@@ -2294,8 +2258,9 @@ export const GridView: React.FC<GridViewProps> = ({
                             animate={{ opacity: 1, x: 0, scale: 1 }}
                             exit={{ opacity: 0, x: -60, scale: 0.95 }}
                             transition={{ duration: 0.35, ease: [0.16, 1, 0.3, 1] }}
-                            className="absolute left-6 top-24 bottom-28 sm:bottom-6 w-80 rounded-3xl z-[80] overflow-y-auto overscroll-contain hide-scrollbar flex flex-col p-6 shadow-2xl border backdrop-blur-2xl pointer-events-auto theme-glass-panel"
+                            className="absolute left-6 top-24 w-80 rounded-3xl z-[80] overflow-y-auto overscroll-contain hide-scrollbar flex flex-col p-6 shadow-2xl border backdrop-blur-2xl pointer-events-auto theme-glass-panel"
                             style={{
+                                bottom: bottomBarPanelBottomPx,
                                 boxShadow: '0 8px 32px 0 rgba(0, 0, 0, 0.2)',
                             }}
                         >
@@ -2616,7 +2581,6 @@ export const GridView: React.FC<GridViewProps> = ({
                     listTitle={t('playlist.viewTracks')}
                     searchTitle={t('home.gridSearchPlaceholder')}
                     onOpenList={() => setShowSidePanel(true)}
-                    onOpenSearch={() => setShowSearchPanel(true)}
                 />
             )}
 
@@ -2651,6 +2615,7 @@ export const GridView: React.FC<GridViewProps> = ({
                             style={style}
                             isUnavailable={isSongUnavailable(track)}
                             isActive={index === focusedIndex}
+                            albumTrackLabel={getAlbumTrackLabel(track)}
                             onPlay={() => {
                                 onSelectTrack?.(track, playableTracks);
                             }}

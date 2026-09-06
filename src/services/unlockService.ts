@@ -1,7 +1,7 @@
 import type { SongResult } from '../types';
 import type { AudioQualityPreference, OmniAudioSource } from '../types/onlineMusic';
 import { omni } from './onlineMusic/omni';
-import { useSettingsUiStore } from '../stores/useSettingsUiStore';
+import { useAudioSettingsStore } from '../stores/useAudioSettingsStore';
 import { calculateMatchScoreDetails } from '../utils/lyrics/matchScore';
 import { buildLyricSearchQuery } from '../utils/lyrics/searchQuery';
 import { getPlaybackSongKey } from '../utils/appPlaybackGuards';
@@ -76,7 +76,7 @@ export const resolveUnlockedAudioSource = async (
     quality: AudioQualityPreference,
     options: UnlockResolveOptions = {},
 ): Promise<OmniAudioSource | null> => {
-    const settings = useSettingsUiStore.getState();
+    const settings = useAudioSettingsStore.getState();
     const allow = options.allow ?? settings.unlockVipSongs;
     const allowCrossProvider = options.allowCrossProvider ?? settings.unlockUseCrossProviderFallback;
 

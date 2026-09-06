@@ -1,4 +1,4 @@
-import { Check, Loader2, RotateCcw, X } from 'lucide-react';
+import { AlertTriangle, Check, Loader2, RotateCcw, ServerCog, X } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { useState } from 'react';
 
@@ -57,6 +57,17 @@ type CookieLoginProps = {
     onSubmit: () => void;
 };
 
+// 后端没起来时二维码永远拿不到，重试只会再报一次同样的错。这里直接把二维码换成失败原因
+// 和「重启后端」按钮，让用户不必重开整个 App。优先于扫码 / 手机号 / Cookie 三种登录方式。
+type BackendFailureProps = {
+    title: string;
+    detail: string | null;
+    restartLabel: string;
+    restartingLabel: string;
+    restarting: boolean;
+    onRestart: () => void;
+};
+
 type OnlineProviderLoginModalProps = {
     title: string;
     note: string;
@@ -68,6 +79,7 @@ type OnlineProviderLoginModalProps = {
     loginMethods?: LoginMethodsProps;
     phoneLogin?: PhoneLoginProps;
     cookieLogin?: CookieLoginProps;
+    backendFailure?: BackendFailureProps;
     onRetry: () => void;
     onClose: () => void;
 };
@@ -85,13 +97,15 @@ const OnlineProviderLoginModal = ({
     loginMethods,
     phoneLogin,
     cookieLogin,
+    backendFailure,
     onRetry,
     onClose,
 }: OnlineProviderLoginModalProps) => {
     const [mode, setMode] = useState<'qr' | 'phone' | 'cookie'>('qr');
     // 步骤一：还没选登录方式，二维码区显示占位框，且不会向后端发出任何请求。
     const awaitingMethod = Boolean(loginMethods) && loginMethods?.selectedId == null;
-    const canRetry = (state === 'expired' || state === 'error') && !awaitingMethod;
+    // 后端故障优先于其余所有状态：这时候刷新二维码没有意义。
+    const canRetry = (state === 'expired' || state === 'error') && !awaitingMethod && !backendFailure;
     const phoneMode = phoneLogin != null && mode === 'phone';
     const cookieMode = cookieLogin != null && mode === 'cookie';
     const showTabs = phoneLogin != null || cookieLogin != null;
@@ -126,7 +140,7 @@ const OnlineProviderLoginModal = ({
                     <X size={16} />
                 </button>
                 <h3 className="text-lg font-bold mb-6" style={{ color: 'var(--text-primary)' }}>{title}</h3>
-                {showTabs && (
+                {!backendFailure && showTabs && (
                     <div className="mb-5 inline-flex rounded-full bg-white/5 border border-white/10 p-1 text-xs font-semibold">
                         <button
                             type="button"
@@ -155,7 +169,7 @@ const OnlineProviderLoginModal = ({
                         )}
                     </div>
                 )}
-                {!phoneMode && loginMethods && (
+                {!backendFailure && !phoneMode && !cookieMode && loginMethods && (
                     <div className="mb-5">
                         <p className="text-[10px] font-semibold uppercase tracking-[0.16em] opacity-45 mb-1.5" style={{ color: 'var(--text-secondary)' }}>
                             {loginMethods.title}
@@ -189,7 +203,32 @@ const OnlineProviderLoginModal = ({
                         </div>
                     </div>
                 )}
-                {phoneMode && phoneLogin ? (
+                {backendFailure ? (
+                    <div className="flex flex-col items-center gap-3">
+                        <div className="relative inline-block bg-white p-2 rounded-xl mb-1 shadow-inner">
+                            <div className="w-40 h-40 flex flex-col items-center justify-center gap-1.5 rounded-lg bg-red-50 px-3 text-center">
+                                <AlertTriangle className="text-red-500 shrink-0" size={22} />
+                                <p className="text-[11px] font-semibold leading-snug text-red-600">{backendFailure.title}</p>
+                                {backendFailure.detail && (
+                                    <p className="max-h-14 w-full overflow-y-auto break-words text-[9px] leading-tight text-red-500/80">
+                                        {backendFailure.detail}
+                                    </p>
+                                )}
+                            </div>
+                        </div>
+                        <button
+                            type="button"
+                            onClick={backendFailure.onRestart}
+                            disabled={backendFailure.restarting}
+                            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-full bg-white/10 hover:bg-white/15 text-xs font-semibold transition-colors disabled:opacity-50 disabled:cursor-default"
+                        >
+                            {backendFailure.restarting
+                                ? <Loader2 size={13} className="animate-spin" />
+                                : <ServerCog size={13} />}
+                            {backendFailure.restarting ? backendFailure.restartingLabel : backendFailure.restartLabel}
+                        </button>
+                    </div>
+                ) : phoneMode && phoneLogin ? (
                     <div className="space-y-3 text-left">
                         <p className="text-[11px] leading-snug opacity-55 text-center" style={{ color: 'var(--text-secondary)' }}>
                             {phoneLogin.desc}

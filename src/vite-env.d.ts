@@ -136,6 +136,7 @@ declare global {
 
   interface ElectronRemoteControlSnapshot {
     hasTrack: boolean;
+    trackKey: string | null;
     title: string | null;
     artist: string | null;
     coverUrl: string | null;
@@ -145,8 +146,15 @@ declare global {
     loopMode: 'off' | 'all' | 'one';
     canGoPrevious: boolean;
     canGoNext: boolean;
+    prevTrackKey: string | null;
     prevTrackTitle: string | null;
+    prevTrackArtist: string | null;
+    prevTrackCoverUrl: string | null;
+    nextTrackKey: string | null;
     nextTrackTitle: string | null;
+    nextTrackArtist: string | null;
+    nextTrackCoverUrl: string | null;
+    trackTransition: import('./types/remoteControl').RemoteTrackTransition | null;
     controlsDisabled: boolean;
     isStageActive: boolean;
     transparentModeEnabled: boolean;
@@ -581,6 +589,7 @@ declare global {
     runtimeLogEnabled: boolean;
     runtimeLogMode: 'append' | 'overwrite';
     memoryMonitorEnabled: boolean;
+    memoryLogEnabled: boolean;
     memoryLogMode: 'append' | 'overwrite';
     memoryIntervalMs: number;
     logsRoot: string;
@@ -640,7 +649,7 @@ declare global {
       ) => () => void;
       /** Developer debug module. Absent in the browser build, where every caller no-ops. */
       debugGetState?: () => Promise<DebugModuleState>;
-      debugSetState?: (patch: Partial<Pick<DebugModuleState, 'runtimeLogEnabled' | 'runtimeLogMode' | 'memoryMonitorEnabled' | 'memoryLogMode' | 'memoryIntervalMs'>>) => Promise<DebugModuleState>;
+      debugSetState?: (patch: Partial<Pick<DebugModuleState, 'runtimeLogEnabled' | 'runtimeLogMode' | 'memoryMonitorEnabled' | 'memoryLogEnabled' | 'memoryLogMode' | 'memoryIntervalMs'>>) => Promise<DebugModuleState>;
       debugOpenLogs?: (which?: 'runtime' | 'memory') => Promise<boolean>;
       debugWriteRuntimeLines?: (lines: Array<{ at: number; level: string; tag: string | null; text: string }>) => void;
       /** What this process can say about itself that the metrics table cannot see from outside. */
@@ -654,6 +663,8 @@ declare global {
       getSettings: () => Promise<any>;
       saveSettings: (key: string, value: any) => Promise<any>;
       onWallpaperModeChanged?: (callback: (settings: Record<string, unknown>) => void) => () => void;
+      onWallpaperTransparentRefused?: (callback: (settings: Record<string, unknown>) => void) => () => void;
+      onWallpaperInputMonitorRequested?: (callback: () => void) => () => void;
       setPlaybackDisplaySleepBlockingActive: (active: boolean) => Promise<boolean>;
       setAppLocale: (localeKey: 'en' | 'zh-CN' | 'in') => Promise<string>;
       getCacheDirectory: () => Promise<ElectronCacheDirectoryResult>;
@@ -684,6 +695,8 @@ declare global {
       removeLocalCoverAsset: (assetId: string) => Promise<boolean>;
       clearLocalCoverAssets: () => Promise<boolean>;
       generateTheme: (lyricsText: string, options?: { isPureMusic?: boolean; songTitle?: string }) => Promise<any>;
+      /** Word-segments lyric lines with the user's configured model. Resolves to one boundary array per line. */
+      segmentLyrics: (lines: string[]) => Promise<string[][]>;
       fetchLyricProxy: (
         url: string,
         init?: {
@@ -694,6 +707,7 @@ declare global {
       ) => Promise<ElectronLyricProxyResponse>;
       getNeteasePort: () => Promise<number>;
       getNeteaseApiStatus: () => Promise<ElectronNeteaseApiStatus>;
+      restartNeteaseApi: () => Promise<ElectronNeteaseApiStatus>;
       onNeteaseApiStatusChanged: (callback: (status: ElectronNeteaseApiStatus) => void) => () => void;
       getKugouApiStatus: () => Promise<ElectronKugouApiStatus>;
       kugouRequest: (

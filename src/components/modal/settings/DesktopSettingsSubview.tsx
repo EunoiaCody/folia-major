@@ -19,6 +19,8 @@ import {
 import { useTranslation } from 'react-i18next';
 import type { Theme } from '../../../types';
 import { CustomSelect } from '../../shared/CustomSelect';
+import { SettingsAnchor } from './navigation/SettingsAnchorContext';
+import SettingsSectionHeading from './navigation/SettingsSectionHeading';
 
 // src/components/modal/settings/DesktopSettingsSubview.tsx
 // Desktop-only tray, update, and AI settings separated from the global settings modal.
@@ -60,6 +62,8 @@ export type DesktopSettingsPreferences = {
     openPlayerOnLaunch: boolean;
     wallpaperMode: boolean;
     onToggleWallpaperMode: (enabled: boolean) => void;
+    wallpaperMacAutohideDock: boolean;
+    onToggleWallpaperMacAutohideDock: (enabled: boolean) => void;
 };
 
 export type DesktopSettingsModel = {
@@ -114,8 +118,12 @@ const DesktopSettingsSubview: React.FC<DesktopSettingsSubviewProps> = ({
         openPlayerOnLaunch,
         wallpaperMode,
         onToggleWallpaperMode,
+        wallpaperMacAutohideDock,
+        onToggleWallpaperMacAutohideDock,
     } = preferences;
     const isLinux = isElectron && window.electron?.platform === 'linux';
+    const isWindows = isElectron && window.electron?.platform === 'win32';
+    const isMac = isElectron && window.electron?.platform === 'darwin';
     const {
         canDownloadUpdate,
         canEnableAutoUpdate,
@@ -155,10 +163,8 @@ const DesktopSettingsSubview: React.FC<DesktopSettingsSubviewProps> = ({
 
     return (
         <>
-            <section className="space-y-4">
-                <h3 className="text-xs font-bold uppercase tracking-widest mb-3 flex items-center gap-2 opacity-60" style={{ color: 'var(--text-secondary)' }}>
-                    <Monitor size={14} className="opacity-70" /> {t('options.desktopTrayBehavior')}
-                </h3>
+            <SettingsAnchor anchorId="desktopTrayBehavior" label={t('options.desktopTrayBehavior')} className="space-y-4">
+                <SettingsSectionHeading icon={Monitor} label={t('options.desktopTrayBehavior')} />
                 <div className={`border rounded-2xl overflow-hidden ${borderColor} ${settingsCardClass}`}>
                     <div className={`p-4 bg-black/[0.04] dark:bg-white/[0.02] border-b ${borderColor}`}>
                         <p className="text-xs opacity-60 leading-relaxed text-left" style={{ color: 'var(--text-secondary)' }}>
@@ -251,13 +257,11 @@ const DesktopSettingsSubview: React.FC<DesktopSettingsSubviewProps> = ({
                         </div>
                     </motion.div>
                 )}
-            </section>
+            </SettingsAnchor>
 
-            {isLinux && (
-                <section className="space-y-4">
-                    <h3 className="text-xs font-bold uppercase tracking-widest mb-3 flex items-center gap-2 opacity-60" style={{ color: 'var(--text-secondary)' }}>
-                        <AppWindow size={14} className="opacity-70" /> {t('options.wallpaperMode') || 'Wallpaper Mode'}
-                    </h3>
+            {(isLinux || isWindows || isMac) && (
+                <SettingsAnchor anchorId="wallpaperMode" label={t('options.wallpaperMode') || 'Wallpaper Mode'} className="space-y-4">
+                    <SettingsSectionHeading icon={AppWindow} label={t('options.wallpaperMode') || 'Wallpaper Mode'} />
                     <div className={`border rounded-2xl overflow-hidden ${borderColor} ${settingsCardClass}`}>
                         <div className={`flex items-center justify-between p-4 gap-4 hover:bg-black/[0.01] dark:hover:bg-white/[0.01] transition-colors border-b ${borderColor}`}>
                             <div className="flex items-start gap-3 min-w-0">
@@ -275,12 +279,35 @@ const DesktopSettingsSubview: React.FC<DesktopSettingsSubviewProps> = ({
                             </div>
                             {renderToggle(wallpaperMode, () => onToggleWallpaperMode(!wallpaperMode))}
                         </div>
+                        {isMac && (
+                            <div className="flex items-center justify-between p-4 gap-4 hover:bg-black/[0.01] dark:hover:bg-white/[0.01] transition-colors">
+                                <div className="flex items-start gap-3 min-w-0">
+                                    <div className={`w-9 h-9 rounded-xl border flex items-center justify-center shrink-0 ${settingsIconClass}`} style={{ color: 'var(--text-primary)' }}>
+                                        <AppWindow size={16} />
+                                    </div>
+                                    <div className="space-y-0.5 text-left">
+                                        <h4 className="text-sm font-semibold leading-none" style={{ color: 'var(--text-primary)' }}>
+                                            {t('options.wallpaperMacAutohideDock')}
+                                        </h4>
+                                        <p className="text-xs opacity-50 leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
+                                            {t('options.wallpaperMacAutohideDockDesc')}
+                                        </p>
+                                    </div>
+                                </div>
+                                {renderToggle(wallpaperMacAutohideDock, () => onToggleWallpaperMacAutohideDock(!wallpaperMacAutohideDock))}
+                            </div>
+                        )}
                     </div>
-                </section>
+                    {isMac && (
+                        <div className="px-1 text-xs leading-relaxed text-left text-amber-500">
+                            {t('options.wallpaperModeMacPermissionHint') || 'Mac wallpaper mode needs Input Monitoring: enable Folia in System Settings → Privacy & Security → Input Monitoring, then restart the app.'}
+                        </div>
+                    )}
+                </SettingsAnchor>
             )}
 
-            <section className="space-y-4">
-                <h3 className="text-xs font-bold uppercase tracking-widest mb-3 flex items-center justify-between gap-3 opacity-60" style={{ color: 'var(--text-secondary)' }}>
+            <SettingsAnchor anchorId="updateCheck" label={t('options.updateCheck') || 'Update Check'} className="space-y-4">
+                <h3 className="text-sm font-bold uppercase tracking-wider mb-4 flex items-center justify-between gap-3 opacity-50" style={{ color: 'var(--text-secondary)' }}>
                     <span className="flex items-center gap-2">
                         <RefreshCw size={14} className="opacity-70" /> {t('options.updateCheck') || 'Update Check'}
                     </span>
@@ -509,12 +536,10 @@ const DesktopSettingsSubview: React.FC<DesktopSettingsSubviewProps> = ({
                         )}
                     </div>
                 )}
-            </section>
+            </SettingsAnchor>
 
-            <section className="space-y-4">
-                <h3 className="text-xs font-bold uppercase tracking-widest mb-3 flex items-center gap-2 opacity-60" style={{ color: 'var(--text-secondary)' }}>
-                    <Cpu size={14} className="opacity-70" /> {t('options.electronSettings') || 'Desktop App Settings'}
-                </h3>
+            <SettingsAnchor anchorId="electronSettings" label={t('options.electronSettings') || 'Desktop App Settings'} className="space-y-4">
+                <SettingsSectionHeading icon={Cpu} label={t('options.electronSettings') || 'Desktop App Settings'} />
 
                 <div className={`border rounded-2xl p-5 ${borderColor} ${settingsCardClass} space-y-5`}>
                     <div className="flex flex-wrap items-center justify-between gap-4">
@@ -605,7 +630,7 @@ const DesktopSettingsSubview: React.FC<DesktopSettingsSubviewProps> = ({
                                         type="text"
                                         value={electronSettings.OPENAI_API_MODEL || ''}
                                         onChange={(e) => setElectronSettings({ ...electronSettings, OPENAI_API_MODEL: e.target.value })}
-                                        placeholder="gpt-4o / gpt-4.1-mini / deepseek-v4-flash"
+                                        placeholder="gpt-5.6-luna / gpt-4.1-mini / deepseek-v4-flash"
                                         className="w-full px-3.5 py-2.5 bg-black/10 dark:bg-white/5 border border-white/10 rounded-xl text-sm focus:outline-none focus:border-zinc-500 dark:focus:border-white/30 focus:ring-2 focus:ring-zinc-500/10 transition-all leading-normal"
                                         style={{ color: 'var(--text-primary)' }}
                                     />
@@ -695,7 +720,7 @@ const DesktopSettingsSubview: React.FC<DesktopSettingsSubviewProps> = ({
                         </button>
                     </div>
                 </div>
-            </section>
+            </SettingsAnchor>
         </>
     );
 };

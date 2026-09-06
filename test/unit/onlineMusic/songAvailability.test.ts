@@ -6,8 +6,8 @@ import { registerOnlineMusicProvider, unregisterOnlineMusicProvider } from '@/se
 // test/unit/onlineMusic/songAvailability.test.ts
 
 const storeStateMock = vi.hoisted(() => vi.fn(() => ({ unlockUnavailableSongs: true })));
-vi.mock('@/stores/useSettingsUiStore', () => ({
-    useSettingsUiStore: { getState: storeStateMock },
+vi.mock('@/stores/useAudioSettingsStore', () => ({
+    useAudioSettingsStore: { getState: storeStateMock },
 }));
 
 const makeSong = (overrides: Partial<SongResult> = {}): SongResult => ({

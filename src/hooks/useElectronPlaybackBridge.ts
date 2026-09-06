@@ -4,7 +4,12 @@ import type { RefObject } from 'react';
 import type { MotionValue } from 'framer-motion';
 import { PlayerState } from '../types';
 import type { SongResult, LyricData } from '../types';
-import type { PlayerChromeVisibilityMode, RemoteControlCommand, RemoteControlSnapshot } from '../types/remoteControl';
+import type {
+    PlayerChromeVisibilityMode,
+    RemoteControlCommand,
+    RemoteControlSnapshot,
+    RemoteTrackTransition,
+} from '../types/remoteControl';
 import type { VideoExportState } from '../types/videoExport';
 import {
     buildDiscordPresenceSnapshotFromPlaybackSyncBridge,
@@ -16,23 +21,23 @@ import {
 import { resolveStagePlayerPositionSec } from '../utils/stagePlayerSnapshot';
 import { getPlaybackSourceRef } from '../utils/appPlaybackGuards';
 import { omni } from '../services/onlineMusic/omni';
+import { subscribeToTransitionCue } from '../services/automix/transitionCue';
+import { useStableActionSurface } from './useStableCallbacks';
+import { selectDisplayCoverUrl, selectDisplayDuration, selectDisplayLyrics, selectDisplayPlayerState, selectDisplaySong, usePlaybackStore } from '../stores/usePlaybackStore';
+import { useAppChromeStore } from '../stores/useAppChromeStore';
+import { useThemeSettingsStore } from '../stores/useThemeSettingsStore';
+import { usePlayerChromeSettingsStore } from '../stores/usePlayerChromeSettingsStore';
+import { currentTime } from '../stores/motionSignals';
 
 // Bridges Electron-specific shell features without coupling to UI components.
 const DISCORD_PRESENCE_SNAPSHOT_INTERVAL_MS = 1000;
 
 type UseElectronPlaybackBridgeOptions = {
+
     isElectronWindow: boolean;
-    setIsTitlebarRevealed: React.Dispatch<React.SetStateAction<boolean>>;
-    isPlayerChromeHidden: boolean;
-    setIsPlayerChromeHidden: React.Dispatch<React.SetStateAction<boolean>>;
     playerChromeVisibilityMode: PlayerChromeVisibilityMode;
     onRemotePlayerChromeVisibilityModeCycle?: () => void;
-    showTransparentWindowBorder: boolean;
-    setShowTransparentWindowBorder: React.Dispatch<React.SetStateAction<boolean>>;
-    transparentPlayerBackground: boolean;
-    activePlaybackContext: 'main' | 'stage';
     isStagePlayerSnapshotEnabled: boolean;
-    mainWindowClickThroughEnabled: boolean;
     isNowPlayingControlDisabledRef: RefObject<boolean>;
     audioRef: RefObject<HTMLAudioElement | null>;
     /**
@@ -46,16 +51,7 @@ type UseElectronPlaybackBridgeOptions = {
      * already does with the displayed track.
      */
     getDisplayAudioElement?: () => HTMLAudioElement | null;
-    audioSrc: string | null;
-    currentTime: MotionValue<number>;
-    duration: number;
-    currentSong: SongResult | null;
-    coverUrl: string | null;
-    cachedCoverUrl: string | null;
-    playerState: PlayerState;
-    playQueue: SongResult[];
     effectiveLoopMode: 'off' | 'all' | 'one';
-    isFmMode: boolean;
     isNowPlayingStageActive: boolean;
     mediaSessionPlayRef: RefObject<() => Promise<void>>;
     mediaSessionPauseRef: RefObject<() => void>;
@@ -66,8 +62,6 @@ type UseElectronPlaybackBridgeOptions = {
     taskbarHasTrackRef: RefObject<boolean>;
     taskbarPlayerStateRef: RefObject<PlayerState>;
     exportState: VideoExportState;
-    isDaylight: boolean;
-    lyrics: LyricData | null;
     lyricTimelineOffsetMs?: number;
     onRemoteExportCommand?: (command: RemoteControlCommand) => boolean;
     onExternalPlayRequest?: (request: any) => Promise<void>;
@@ -81,6 +75,10 @@ type UseElectronPlaybackBridgeOptions = {
      * (and the ordinary seek runs) when no blend is in flight.
      */
     onRemoteTransitionSeek?: (time: number) => boolean;
+    /** Publishes the audible transition cue for either AutoMix or Crossfade mode. */
+    publishTrackTransition: boolean;
+    /** Filters out settings previews and cues emitted outside a live deck transition. */
+    isTrackTransitionAudible: () => boolean;
     isLiked: boolean;
     onLike?: () => void;
 };
@@ -92,30 +90,13 @@ const emptyPlaybackSyncBridgeStatus = (): ElectronPlaybackSyncBridgeStatus => ({
 
 export const useElectronPlaybackBridge = ({
     isElectronWindow,
-    setIsTitlebarRevealed,
-    isPlayerChromeHidden,
-    setIsPlayerChromeHidden,
     playerChromeVisibilityMode,
     onRemotePlayerChromeVisibilityModeCycle,
-    showTransparentWindowBorder,
-    setShowTransparentWindowBorder,
-    transparentPlayerBackground,
-    activePlaybackContext,
     isStagePlayerSnapshotEnabled,
-    mainWindowClickThroughEnabled,
     isNowPlayingControlDisabledRef,
     audioRef,
     getDisplayAudioElement,
-    audioSrc,
-    currentTime,
-    duration,
-    currentSong,
-    coverUrl,
-    cachedCoverUrl,
-    playerState,
-    playQueue,
     effectiveLoopMode,
-    isFmMode,
     isNowPlayingStageActive,
     mediaSessionPlayRef,
     mediaSessionPauseRef,
@@ -126,18 +107,50 @@ export const useElectronPlaybackBridge = ({
     taskbarHasTrackRef,
     taskbarPlayerStateRef,
     exportState,
-    isDaylight,
-    lyrics,
     lyricTimelineOffsetMs,
     onRemoteExportCommand,
     onExternalPlayRequest,
     onRemoteCycleLoopMode,
     onRemoteTransitionSeek,
+    publishTrackTransition,
+    isTrackTransitionAudible,
     isLiked,
     onLike,
 }: UseElectronPlaybackBridgeOptions) => {
+    // Read here rather than passed in: all store fields or a module-level motion signal.
+    const setIsTitlebarRevealed = useAppChromeStore(state => state.setIsTitlebarRevealed);
+    const isPlayerChromeHidden = useAppChromeStore(state => state.isPlayerChromeHidden);
+    const setIsPlayerChromeHidden = useAppChromeStore(state => state.setIsPlayerChromeHidden);
+    const showTransparentWindowBorder = useAppChromeStore(state => state.showTransparentWindowBorder);
+    const setShowTransparentWindowBorder = useAppChromeStore(state => state.setShowTransparentWindowBorder);
+    const mainWindowClickThroughEnabled = useAppChromeStore(state => state.isMainWindowClickThroughEnabled);
+    const transparentPlayerBackground = usePlayerChromeSettingsStore(state => state.transparentPlayerBackground);
+    const isDaylight = useThemeSettingsStore(state => state.isDaylight);
+    const activePlaybackContext = usePlaybackStore(state => state.activePlaybackContext);
+    const audioSrc = usePlaybackStore(state => state.audioSrc);
+    const cachedCoverUrl = usePlaybackStore(state => state.cachedCoverUrl);
+    const playQueue = usePlaybackStore(state => state.playQueue);
+    const isFmMode = usePlaybackStore(state => state.isFmMode);
+    // The HELD picture and its clock, so the remote, Discord and the taskbar switch song when a
+    // blend settles rather than when it arms - the same thing useMediaSessionBridge publishes.
+    // The raw transport reads IDLE for the length of a blend's lead, which drew a stopped player
+    // on the remote over a track the listener could still hear, offering a play button.
+    const currentSong = usePlaybackStore(selectDisplaySong);
+    const lyrics = usePlaybackStore(selectDisplayLyrics);
+    const coverUrl = usePlaybackStore(selectDisplayCoverUrl);
+    const duration = usePlaybackStore(selectDisplayDuration);
+    const playerState = usePlaybackStore(selectDisplayPlayerState);
+
     const [playbackSyncBridgeStatus, setPlaybackSyncBridgeStatus] = useState<ElectronPlaybackSyncBridgeStatus>(() => emptyPlaybackSyncBridgeStatus());
     const pausedByVoiceInputRef = useRef(false);
+    const remoteTrackTransitionRef = useRef<RemoteTrackTransition | null>(null);
+    const publishTrackTransitionRef = useRef(publishTrackTransition);
+    const isTrackTransitionAudibleRef = useRef(isTrackTransitionAudible);
+    // 渲染期改 ref 会让被丢弃的那次渲染也留下痕迹；这两个只在事件与定时发布里读，放进 effect 即可。
+    useEffect(() => {
+        publishTrackTransitionRef.current = publishTrackTransition;
+        isTrackTransitionAudibleRef.current = isTrackTransitionAudible;
+    }, [publishTrackTransition, isTrackTransitionAudible]);
     const currentSongSource = currentSong ? getPlaybackSourceRef(currentSong) : null;
     const canLikeCurrentSong = Boolean(
         currentSong
@@ -151,6 +164,31 @@ export const useElectronPlaybackBridge = ({
     const likeUnavailableProvider = currentSongSource?.kind === 'online' && !canLikeCurrentSong
         ? omni.getProviderLabel(currentSongSource.providerId)
         : undefined;
+
+    // The cue is event-shaped in the main renderer. Keep only the current low-frequency snapshot
+    // in a ref so the Remote's existing 500ms publisher can carry it without a React render loop.
+    useEffect(() => subscribeToTransitionCue(cue => {
+        // 设置面板的演示 cue 既不是交接的开始也不是结束：真实混音正跑到一半时把它当成
+        // cue 结束会直接取消遥控窗口的交接，所以这里整条忽略。
+        if (cue?.preview) {
+            return;
+        }
+
+        if (
+            cue === null
+            || !publishTrackTransitionRef.current
+            || !isTrackTransitionAudibleRef.current()
+        ) {
+            remoteTrackTransitionRef.current = null;
+            return;
+        }
+
+        remoteTrackTransitionRef.current = {
+            startedAtMs: Date.now(),
+            durationSec: cue.seconds,
+            crossover: cue.crossover,
+        };
+    }), []);
     const stageSnapshotCacheRef = useRef<{
         playQueue: SongResult[];
         currentSong: SongResult | null;
@@ -243,6 +281,9 @@ export const useElectronPlaybackBridge = ({
                 includeLyrics: options.includeLyrics,
                 lyrics,
                 playerChromeVisibilityMode,
+                trackTransition: publishTrackTransitionRef.current && isTrackTransitionAudibleRef.current()
+                    ? remoteTrackTransitionRef.current
+                    : null,
             },
             ),
             canLike: canLikeCurrentSong,
@@ -682,7 +723,10 @@ export const useElectronPlaybackBridge = ({
         });
     }, [onExternalPlayRequest]);
 
-    return {
+    // Wrapped so the callbacks this hook hands back keep one identity for the app's lifetime. They
+    // are all invoked from events or effects, and their churn was what kept every build*Model memo
+    // in App.tsx from ever holding - see useStableCallbacks.ts.
+    return useStableActionSurface({
         publishStagePlayerPlaybackUpdate,
-    };
+    });
 };

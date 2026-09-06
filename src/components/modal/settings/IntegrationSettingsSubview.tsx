@@ -7,13 +7,17 @@ import type { NavidromeServerProfile } from '../../../types/navidrome';
 import type { ObsBrowserSourceStatus } from '../../../types/obsBrowserSource';
 import type { PlayerCapConnectionStatus } from '../../../types/playerCap';
 import { CustomSelect } from '../../shared/CustomSelect';
-import { buildCurrentObsUrl } from '../../../utils/currentObsUrl';
-import { resolveWebObsTarget } from '../../../utils/webObsTarget';
+import { buildCurrentObsUrl } from '../../../services/obs/currentObsUrl';
+import { resolveWebObsTarget } from '../../../services/obs/webObsTarget';
 import { ObsCopyUrlButton } from '../../shared/ObsCopyUrlButton';
 import { ObsCopyCssButton } from '../../shared/ObsCopyCssButton';
-import { resolveObsCopyHintKey } from '../../../utils/visualSettingsConfig';
-import { useSettingsUiStore } from '../../../stores/useSettingsUiStore';
+import { resolveObsCopyHintKey } from '../../../services/obs/visualSettingsConfig';
 import type { LyricApiStatus } from '../../../types/lyricApi';
+import { SettingsAnchor } from './navigation/SettingsAnchorContext';
+import SettingsSectionHeading from './navigation/SettingsSectionHeading';
+import { setStatusMessage } from '../../../stores/useStatusMessageStore';
+import { useThemeSettingsStore } from '../../../stores/useThemeSettingsStore';
+import { useStageSettingsStore } from '../../../stores/useStageSettingsStore';
 
 // src/components/modal/settings/IntegrationSettingsSubview.tsx
 // Integration settings for Discord, Stage, Now Playing, OBS, and Navidrome.
@@ -170,8 +174,7 @@ const IntegrationSettingsSubview: React.FC<IntegrationSettingsSubviewProps> = ({
         setPlayerCapTimeBasis,
         setPlayerCapSticky,
         setWebStageSource,
-        isDaylight,
-    } = useSettingsUiStore(useShallow(state => ({
+    } = useStageSettingsStore(useShallow(state => ({
         playerCapHost: state.playerCapHost,
         playerCapPlayer: state.playerCapPlayer,
         playerCapTimeBasis: state.playerCapTimeBasis,
@@ -181,8 +184,8 @@ const IntegrationSettingsSubview: React.FC<IntegrationSettingsSubviewProps> = ({
         setPlayerCapTimeBasis: state.setPlayerCapTimeBasis,
         setPlayerCapSticky: state.setPlayerCapSticky,
         setWebStageSource: state.setWebStageSource,
-        isDaylight: state.isDaylight,
     })));
+    const isDaylight = useThemeSettingsStore(state => state.isDaylight);
     const [playerCapHostDraft, setPlayerCapHostDraft] = useState(playerCapHost);
     useEffect(() => { setPlayerCapHostDraft(playerCapHost); }, [playerCapHost]);
     const playerCapConnected = playerCapConnectionStatus === 'connected';
@@ -242,7 +245,7 @@ const IntegrationSettingsSubview: React.FC<IntegrationSettingsSubviewProps> = ({
         // state, so a plain "copied" success would be redundant.
         const hint = resolveObsCopyHintKey();
         if (hint.type === 'info') {
-            useSettingsUiStore.getState().statusSetter?.({ type: 'info', text: t(hint.key) });
+            setStatusMessage({ type: 'info', text: t(hint.key) });
         }
     };
 
@@ -355,10 +358,8 @@ const IntegrationSettingsSubview: React.FC<IntegrationSettingsSubviewProps> = ({
     return (
         <>
             {isElectron && (
-                <section>
-                    <h3 className="text-sm font-bold uppercase tracking-wider opacity-50 mb-4 flex items-center gap-2" style={{ color: 'var(--text-secondary)' }}>
-                        <Activity size={14} /> {t('options.discordRichPresence') || 'Discord Rich Presence'}
-                    </h3>
+                <SettingsAnchor anchorId="discordRichPresence" label={t('options.discordRichPresence') || 'Discord Rich Presence'}>
+                    <SettingsSectionHeading icon={Activity} label={t('options.discordRichPresence') || 'Discord Rich Presence'} />
                     <div className={`p-4 rounded-xl border space-y-4 ${settingsCardClass}`}>
                         <div className="flex items-center justify-between gap-4">
                             <div className="space-y-1">
@@ -391,14 +392,12 @@ const IntegrationSettingsSubview: React.FC<IntegrationSettingsSubviewProps> = ({
                             )}
                         </div>
                     </div>
-                </section>
+                </SettingsAnchor>
             )}
 
             {isElectron && obsBrowserSourceStatus && (
-                <section>
-                    <h3 className="text-sm font-bold uppercase tracking-wider opacity-50 mb-4 flex items-center gap-2" style={{ color: 'var(--text-secondary)' }}>
-                        <Server size={14} /> {t('options.obsBrowserSource') || 'OBS Browser Source'}
-                    </h3>
+                <SettingsAnchor anchorId="obsBrowserSource" label={t('options.obsBrowserSource') || 'OBS Browser Source'}>
+                    <SettingsSectionHeading icon={Server} label={t('options.obsBrowserSource') || 'OBS Browser Source'} />
                     <div className={`p-4 rounded-xl border space-y-4 ${settingsCardClass}`}>
                         <div className="flex items-center justify-between gap-4">
                             <div className="space-y-1">
@@ -461,14 +460,12 @@ const IntegrationSettingsSubview: React.FC<IntegrationSettingsSubviewProps> = ({
                             </div>
                         )}
                     </div>
-                </section>
+                </SettingsAnchor>
             )}
 
             {isElectron && lyricApi.status && (
-                <section>
-                    <h3 className="text-sm font-bold uppercase tracking-wider opacity-50 mb-4 flex items-center gap-2" style={{ color: 'var(--text-secondary)' }}>
-                        <Server size={14} /> {t('options.lyricApi')}
-                    </h3>
+                <SettingsAnchor anchorId="lyricApi" label={t('options.lyricApi')}>
+                    <SettingsSectionHeading icon={Server} label={t('options.lyricApi')} />
                     <div className={`p-4 rounded-xl border space-y-4 ${settingsCardClass}`}>
                         <div className="flex items-center justify-between gap-4">
                             <div className="space-y-1">
@@ -521,14 +518,12 @@ const IntegrationSettingsSubview: React.FC<IntegrationSettingsSubviewProps> = ({
                             </div>
                         )}
                     </div>
-                </section>
+                </SettingsAnchor>
             )}
 
             {isElectron && stageStatus && (
-                <section>
-                    <h3 className="text-sm font-bold uppercase tracking-wider opacity-50 mb-4 flex items-center gap-2" style={{ color: 'var(--text-secondary)' }}>
-                        <Server size={14} /> {t('options.stageMode')}
-                    </h3>
+                <SettingsAnchor anchorId="stageMode" label={t('options.stageMode')}>
+                    <SettingsSectionHeading icon={Server} label={t('options.stageMode')} />
                     <div className={`p-4 rounded-xl border space-y-4 ${settingsCardClass}`}>
                         <div className="flex items-center justify-between gap-4">
                             <div className="space-y-1">
@@ -650,11 +645,11 @@ const IntegrationSettingsSubview: React.FC<IntegrationSettingsSubviewProps> = ({
                             </div>
                         )}
                     </div>
-                </section>
+                </SettingsAnchor>
             )}
 
             {!isElectron && (
-                <section>
+                <SettingsAnchor anchorId="stageMode" label={t('options.stageMode')}>
                     {/* Right column uses max-content so it sizes to the URL button's natural width; the CSS button below stretches to match. */}
                     <div className="mb-4 grid grid-cols-[minmax(0,1fr)_max-content] gap-x-2 gap-y-2 items-center">
                         <h3 className="text-sm font-bold uppercase tracking-wider flex items-center gap-2 opacity-50 row-span-full self-center m-0" style={{ color: 'var(--text-secondary)' }}>
@@ -723,10 +718,10 @@ const IntegrationSettingsSubview: React.FC<IntegrationSettingsSubviewProps> = ({
                             </div>
                         )}
                     </div>
-                </section>
+                </SettingsAnchor>
             )}
 
-            <section>
+            <SettingsAnchor anchorId="navidrome" label={t('navidrome.settings') || 'Navidrome Settings'}>
                 <h3 className="text-sm font-bold uppercase tracking-wider opacity-50 mb-4 flex items-center gap-2" style={{ color: 'var(--text-secondary)' }}>
                     <Server size={14} /> {t('navidrome.settings') || 'Navidrome Settings'}
                     {navidromeEnabled && navidromeConfigured && (
@@ -856,7 +851,7 @@ const IntegrationSettingsSubview: React.FC<IntegrationSettingsSubviewProps> = ({
                         </div>
                     )}
                 </div>
-            </section>
+            </SettingsAnchor>
         </>
     );
 };

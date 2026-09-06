@@ -7,7 +7,10 @@ import { exportSyncLibraryBundle, importSyncLibraryBundle, isSyncLibraryExportBu
 import { createSyncLibraryZipBlob, readSyncLibraryZipFile } from '../../../services/sync/syncArchive';
 import { SYNC_PROVIDER, type SyncProviderConfig, type SyncRuntimeStatus } from '../../../services/sync/syncTypes';
 import { createSafeObjectUrl } from '../../../utils/blobGuards';
+import { formatLocalDateTimeStamp } from '../../../utils/downloadFileName';
 import { CustomSelect } from '../../shared/CustomSelect';
+import { SettingsAnchor } from './navigation/SettingsAnchorContext';
+import SettingsSectionHeading from './navigation/SettingsSectionHeading';
 
 // src/components/modal/settings/StorageSettingsSection.tsx
 // Shared storage and media cache settings used by the main options page and storage subview.
@@ -199,7 +202,7 @@ const StorageSettingsSection: React.FC<StorageSettingsSectionProps> = ({
             if (!url) throw new TypeError('Sync export must produce a Blob');
             const link = document.createElement('a');
             link.href = url;
-            link.download = `folia-sync-${new Date().toISOString().replace(/[:.]/g, '-')}.zip`;
+            link.download = `folia-sync-${formatLocalDateTimeStamp()}.zip`;
             link.click();
             URL.revokeObjectURL(url);
         } finally {
@@ -239,7 +242,7 @@ const StorageSettingsSection: React.FC<StorageSettingsSectionProps> = ({
 
     return (
         <>
-            <section>
+            <SettingsAnchor anchorId="cacheDetails" label={t('options.cacheDetails') || 'Cache Details'}>
                 <h3 className="text-sm font-bold uppercase tracking-wider opacity-50 mb-4 flex items-center gap-2" style={{ color: 'var(--text-secondary)' }}>
                     <Database size={14} /> {t('options.cacheDetails') || 'Cache Storage'}
                     <button
@@ -275,12 +278,10 @@ const StorageSettingsSection: React.FC<StorageSettingsSectionProps> = ({
                         </div>
                     ))}
                 </div>
-            </section>
+            </SettingsAnchor>
 
-            <section>
-                <h3 className="text-sm font-bold uppercase tracking-wider opacity-50 mb-4 flex items-center gap-2" style={{ color: 'var(--text-secondary)' }}>
-                    <Cloud size={14} /> {t('options.r2Sync') || 'Sync Server'}
-                </h3>
+            <SettingsAnchor anchorId="r2Sync" label={t('options.r2Sync') || 'Sync Server'}>
+                <SettingsSectionHeading icon={Cloud} label={t('options.r2Sync') || 'Sync Server'} />
                 <div className={`p-4 rounded-xl border space-y-4 ${settingsCardClass}`}>
                     <div className="flex items-center justify-between gap-4">
                         <div className="space-y-1">
@@ -425,12 +426,10 @@ const StorageSettingsSection: React.FC<StorageSettingsSectionProps> = ({
                         {syncSummaryMsg || syncStatusLabel}
                     </div>
                 </div>
-            </section>
+            </SettingsAnchor>
 
-            <section>
-                <h3 className="text-sm font-bold uppercase tracking-wider opacity-50 mb-4 flex items-center gap-2" style={{ color: 'var(--text-secondary)' }}>
-                    <Database size={14} /> {t('options.mediaCache') || 'Media Cache'}
-                </h3>
+            <SettingsAnchor anchorId="mediaCache" label={t('options.mediaCache') || 'Media Cache'}>
+                <SettingsSectionHeading icon={Database} label={t('options.mediaCache') || 'Media Cache'} />
                 <div className={`p-4 rounded-xl border space-y-4 ${settingsCardClass}`}>
                     <div className="flex items-center justify-between">
                         <div className="space-y-1">
@@ -516,7 +515,7 @@ const StorageSettingsSection: React.FC<StorageSettingsSectionProps> = ({
                         <span className="font-mono">{mediaCount} · {cacheSizes.media}</span>
                     </div>
                 </div>
-            </section>
+            </SettingsAnchor>
         </>
     );
 };

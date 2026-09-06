@@ -2,7 +2,7 @@ import type { SongResult } from '../../types';
 import type { ProviderSongAvailability, ProviderSongReplacement } from '../../types/onlineMusic';
 import { getOnlineMusicProviderForSong } from './providerRegistry';
 import { getPlaybackSourceRef } from '../../utils/appPlaybackGuards';
-import { useSettingsUiStore } from '../../stores/useSettingsUiStore';
+import { useAudioSettingsStore } from '../../stores/useAudioSettingsStore';
 
 // src/services/onlineMusic/songAvailability.ts
 
@@ -46,6 +46,6 @@ export const shouldAutoReplaceUnavailableSong = (
     settings?: { unlockUnavailableSongs: boolean },
 ): boolean => {
     if (!song) return false;
-    const enabled = settings?.unlockUnavailableSongs ?? useSettingsUiStore.getState().unlockUnavailableSongs;
+    const enabled = settings?.unlockUnavailableSongs ?? useAudioSettingsStore.getState().unlockUnavailableSongs;
     return enabled && getPlaybackSourceRef(song).kind === 'online' && getSongAvailability(song).state === 'unavailable';
 };

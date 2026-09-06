@@ -1,7 +1,7 @@
 import type { LocalSong, UnifiedSong } from '../../../types';
 import type { NavidromeSong } from '../../../types/navidrome';
 import { isSongUnavailable, shouldAutoReplaceUnavailableSong } from '../../../services/onlineMusic/songAvailability';
-import { useSettingsUiStore } from '../../../stores/useSettingsUiStore';
+import { useAudioSettingsStore } from '../../../stores/useAudioSettingsStore';
 import { resolveNavidromePlaybackCarrier } from '../../../utils/appPlaybackGuards';
 
 // src/components/app/search/searchTrackActions.ts
@@ -18,7 +18,7 @@ export const dispatchSearchTrackAction = (
     track: UnifiedSong,
     deps: SearchTrackSourceDeps,
 ): boolean => {
-    if (isSongUnavailable(track) && !shouldAutoReplaceUnavailableSong(track, useSettingsUiStore.getState())) {
+    if (isSongUnavailable(track) && !shouldAutoReplaceUnavailableSong(track, useAudioSettingsStore.getState())) {
         return false;
     }
 

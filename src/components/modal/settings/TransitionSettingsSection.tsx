@@ -1,15 +1,18 @@
 import React from 'react';
-import { AlertTriangle, Blend, Disc3, Orbit, Sparkles, Waves } from 'lucide-react';
+import { AlertTriangle, Blend, ChevronDown, Disc3, Orbit, Sparkles, Waves } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useShallow } from 'zustand/react/shallow';
 import type { Theme } from '../../../types';
-import { useSettingsUiStore } from '../../../stores/useSettingsUiStore';
 import { CROSSFADE_MAX_SEC, CROSSFADE_MIN_SEC } from '../../../services/automix/crossfadePlanner';
 import { canAnalyseTracks, type TransitionMode } from '../../../services/automix/transitionStrategy';
 import { transitionCapabilities } from '../../../services/automix/stems';
 import { modelsPresent, subscribeModelAvailability } from '../../../services/automix/modelAvailability';
-import { announceTransition } from '../../../services/automix/transitionCue';
+import { announceTransition, type TransitionRenderer } from '../../../services/automix/transitionCue';
 import AutomixModelsSection from './AutomixModelsSection';
+import { SettingsAnchor } from './navigation/SettingsAnchorContext';
+import SettingsSectionHeading from './navigation/SettingsSectionHeading';
+import { useAutomixSettingsStore } from '../../../stores/useAutomixSettingsStore';
+import { useAudioSettingsStore } from '../../../stores/useAudioSettingsStore';
 
 // src/components/modal/settings/TransitionSettingsSection.tsx
 // The Folia transition block on the playback options page: the master switch, the choice between
@@ -21,11 +24,17 @@ import AutomixModelsSection from './AutomixModelsSection';
 // services rather than decided here.
 
 /**
- * The pass played when the animation switch goes on: an unremarkable ten-second blend at 120 BPM
+ * The pass played when an animation switch goes on: an unremarkable ten-second blend at 120 BPM
  * with the handover slightly past the middle. Long enough to clear the animation's own minimum,
  * and shaped like the blends it will actually be drawing rather than like a demo.
+ *
+ * Addressed to the switch that asked. One announcement reaches both drawings, so an unaddressed
+ * preview made the ring - if it was already on - play again every time the card's switch was
+ * touched, and the two switches read as one.
  */
-const PREVIEW_CUE = { seconds: 10, crossover: 0.55, periodSec: 0.5 };
+const previewCue = (renderer: TransitionRenderer) => (
+    { seconds: 10, crossover: 0.55, periodSec: 0.5, preview: renderer } as const
+);
 
 type TransitionSettingsSectionProps = {
     isDaylight: boolean;
@@ -40,33 +49,59 @@ const TransitionSettingsSection: React.FC<TransitionSettingsSectionProps> = ({
 }) => {
     const { t } = useTranslation();
     const {
+        enableMediaCache,
+        onToggleMediaCache,
+    } = useAudioSettingsStore(useShallow(state => ({
+        enableMediaCache: state.enableMediaCache,
+        onToggleMediaCache: state.handleToggleMediaCache,
+    })));
+    const {
         automixEnabled,
         transitionMode,
         crossfadeMaxSec,
         transitionPerformance,
         transitionAnimation,
-        enableMediaCache,
+        transitionAnimationCard,
         onToggleAutomix,
         onSetTransitionMode,
         onSetCrossfadeMaxSec,
         onToggleTransitionPerformance,
         onToggleTransitionAnimation,
-        onToggleMediaCache,
-    } = useSettingsUiStore(useShallow(state => ({
+        onToggleTransitionAnimationCard,
+    } = useAutomixSettingsStore(useShallow(state => ({
         automixEnabled: state.automixEnabled,
         transitionMode: state.transitionMode,
         crossfadeMaxSec: state.crossfadeMaxSec,
         transitionPerformance: state.transitionPerformance,
         transitionAnimation: state.transitionAnimation,
-        enableMediaCache: state.enableMediaCache,
+        transitionAnimationCard: state.transitionAnimationCard,
         onToggleAutomix: state.handleToggleAutomix,
         onSetTransitionMode: state.handleSetTransitionMode,
         onSetCrossfadeMaxSec: state.handleSetCrossfadeMaxSec,
         onToggleTransitionPerformance: state.handleToggleTransitionPerformance,
         onToggleTransitionAnimation: state.handleToggleTransitionAnimation,
-        onToggleMediaCache: state.handleToggleMediaCache,
+        onToggleTransitionAnimationCard: state.handleToggleTransitionAnimationCard,
     })));
 
+    const [animationOpen, setAnimationOpen] = React.useState(false);
+    // One list rather than two hand-written rows: the two differ only in which switch they hold, and
+    // the toggle markup either would have to repeat is the fiddly half.
+    const animationSwitches = [
+        {
+            key: 'ring' as TransitionRenderer,
+            label: t('options.transitionAnimationRing'),
+            desc: t('options.transitionAnimationRingDesc'),
+            on: transitionAnimation,
+            onToggle: onToggleTransitionAnimation,
+        },
+        {
+            key: 'card' as TransitionRenderer,
+            label: t('options.transitionAnimationCard'),
+            desc: t('options.transitionAnimationCardDesc'),
+            on: transitionAnimationCard,
+            onToggle: onToggleTransitionAnimationCard,
+        },
+    ];
     const accentOutlineColor = theme?.accentColor || (isDaylight ? '#44403c' : '#f4f4f5');
     const toggleOffBackgroundClass = isDaylight ? 'bg-zinc-300/90' : 'bg-white/10';
     const rangeInputClass = `w-full accent-current ${isDaylight ? 'text-zinc-900' : 'text-white'}`;
@@ -137,10 +172,8 @@ const TransitionSettingsSection: React.FC<TransitionSettingsSectionProps> = ({
             : null;
 
     return (
-        <section>
-            <h3 className="text-sm font-bold uppercase tracking-wider opacity-50 mb-4 flex items-center gap-2" style={{ color: 'var(--text-secondary)' }}>
-                <Blend size={14} /> {t('options.transitionSettings')}
-            </h3>
+        <SettingsAnchor anchorId="transitionSettings" label={t('options.transitionSettings')}>
+            <SettingsSectionHeading icon={Blend} label={t('options.transitionSettings')} />
             <div className={`rounded-xl border overflow-hidden ${settingsCardClass}`}>
                 <div className="p-4 flex items-start justify-between gap-4">
                     <div className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
@@ -317,40 +350,85 @@ const TransitionSettingsSection: React.FC<TransitionSettingsSectionProps> = ({
                                     <div className={`w-4 h-4 rounded-full bg-white shadow-sm transition-transform ${transitionPerformance && capabilities.stems ? 'translate-x-6' : 'translate-x-0'}`} />
                                 </button>
                             </div>
-                            {/* The one control here whose effect is not a sound. Switching it on
-                                plays a preview pass immediately: the animation it enables otherwise
-                                waits for the next long blend, which may be minutes off and may not
-                                be long enough, and a switch that looks inert is the same failure as
-                                one that is. */}
+                            {/* Two pictures of one blend, each with its own switch: the ring in the
+                                middle of the screen, and the same run drawn on the now playing
+                                card's border. Folded because they answer one question between them,
+                                and a page of switches should ask it once.
+
+                                The only controls here whose effect is not a sound. Switching either
+                                on plays a preview pass immediately: the animation it enables
+                                otherwise waits for the next long blend, which may be minutes off and
+                                may not be long enough, and a switch that looks inert is the same
+                                failure as one that is. */}
                             <div
-                                className="flex items-start justify-between gap-4 rounded-lg border px-3 py-3"
+                                className="rounded-lg border"
                                 style={{
                                     borderColor: isDaylight ? 'rgba(24, 24, 27, 0.12)' : 'rgba(255, 255, 255, 0.1)',
                                 }}
                             >
-                                <div className="min-w-0">
-                                    <div className="text-sm font-medium flex items-center gap-2" style={{ color: 'var(--text-primary)' }}>
-                                        <Orbit size={14} />
-                                        {t('options.transitionAnimation')}
-                                    </div>
-                                    <div className="mt-1 text-[11px] leading-relaxed opacity-60 max-w-[420px]" style={{ color: 'var(--text-secondary)' }}>
-                                        {t('options.transitionAnimationDesc')}
-                                    </div>
-                                </div>
                                 <button
                                     type="button"
-                                    onClick={() => {
-                                        const next = !transitionAnimation;
-                                        onToggleTransitionAnimation(next);
-                                        if (next) announceTransition(PREVIEW_CUE);
-                                    }}
-                                    className={`w-12 h-6 rounded-full p-1 transition-colors shrink-0 ${transitionAnimation ? '' : toggleOffBackgroundClass}`}
-                                    style={{ backgroundColor: transitionAnimation ? theme?.secondaryColor || 'rgba(114, 119, 134, 1)' : undefined }}
-                                    aria-pressed={transitionAnimation}
-                                    aria-label={t('options.transitionAnimation')}
+                                    onClick={() => setAnimationOpen(open => !open)}
+                                    aria-expanded={animationOpen}
+                                    className="flex w-full items-start justify-between gap-4 px-3 py-3 text-left"
                                 >
-                                    <div className={`w-4 h-4 rounded-full bg-white shadow-sm transition-transform ${transitionAnimation ? 'translate-x-6' : 'translate-x-0'}`} />
+                                    <div className="min-w-0">
+                                        <div className="text-sm font-medium flex items-center gap-2" style={{ color: 'var(--text-primary)' }}>
+                                            <Orbit size={14} />
+                                            {t('options.transitionAnimation')}
+                                        </div>
+                                        <div className="mt-1 text-[11px] leading-relaxed opacity-60 max-w-[420px]" style={{ color: 'var(--text-secondary)' }}>
+                                            {t('options.transitionAnimationDesc')}
+                                        </div>
+                                    </div>
+                                    <div className="flex shrink-0 items-center gap-2 pt-0.5" style={{ color: 'var(--text-secondary)' }}>
+                                        {/* Which of the two are on, without opening it. Named rather
+                                            than counted: "one of two" does not say which. */}
+                                        <span className="text-[11px] opacity-70">
+                                            {[
+                                                transitionAnimation ? t('options.transitionAnimationRing') : null,
+                                                transitionAnimationCard ? t('options.transitionAnimationCard') : null,
+                                            ].filter(Boolean).join(' · ') || t('options.transitionAnimationOff')}
+                                        </span>
+                                        <ChevronDown
+                                            size={14}
+                                            className={`transition-transform ${animationOpen ? 'rotate-180' : ''}`}
+                                        />
+                                    </div>
                                 </button>
+                                {animationOpen && (
+                                    <div
+                                        className="space-y-3 border-t px-3 py-3"
+                                        style={{ borderColor: isDaylight ? 'rgba(24, 24, 27, 0.12)' : 'rgba(255, 255, 255, 0.1)' }}
+                                    >
+                                        {animationSwitches.map(({ key, label, desc, on, onToggle }) => (
+                                            <div key={key} className="flex items-start justify-between gap-4">
+                                                <div className="min-w-0">
+                                                    <div className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
+                                                        {label}
+                                                    </div>
+                                                    <div className="mt-1 text-[11px] leading-relaxed opacity-60 max-w-[420px]" style={{ color: 'var(--text-secondary)' }}>
+                                                        {desc}
+                                                    </div>
+                                                </div>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => {
+                                                        const next = !on;
+                                                        onToggle(next);
+                                                        if (next) announceTransition(previewCue(key));
+                                                    }}
+                                                    className={`w-12 h-6 rounded-full p-1 transition-colors shrink-0 ${on ? '' : toggleOffBackgroundClass}`}
+                                                    style={{ backgroundColor: on ? theme?.secondaryColor || 'rgba(114, 119, 134, 1)' : undefined }}
+                                                    aria-pressed={on}
+                                                    aria-label={label}
+                                                >
+                                                    <div className={`w-4 h-4 rounded-full bg-white shadow-sm transition-transform ${on ? 'translate-x-6' : 'translate-x-0'}`} />
+                                                </button>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
                             </div>
                         </div>
                     )}
@@ -364,7 +442,7 @@ const TransitionSettingsSection: React.FC<TransitionSettingsSectionProps> = ({
                     {capabilities.desktop && <AutomixModelsSection isDaylight={isDaylight} />}
                 </div>
             </div>
-        </section>
+        </SettingsAnchor>
     );
 };
 

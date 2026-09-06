@@ -4,8 +4,8 @@ import type { LocalSong, UnifiedSong } from '@/types';
 import { registerOnlineMusicProvider } from '@/services/onlineMusic/providerRegistry';
 
 const getStateMock = vi.hoisted(() => vi.fn(() => ({ unlockUnavailableSongs: false })));
-vi.mock('@/stores/useSettingsUiStore', () => ({
-    useSettingsUiStore: { getState: getStateMock },
+vi.mock('@/stores/useAudioSettingsStore', () => ({
+    useAudioSettingsStore: { getState: getStateMock },
 }));
 
 // Netease provider so shouldAutoReplaceUnavailableSong can resolve availability.

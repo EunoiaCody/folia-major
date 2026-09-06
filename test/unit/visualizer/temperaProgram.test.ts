@@ -131,6 +131,25 @@ describe('Tempera program compiler', () => {
         expect(segments.filter(segment => segment.text.includes('time'))[1].startTime).toBeGreaterThanOrEqual(2);
     });
 
+    // temperaLayout tells a real word gap (0.26em) from a bare CJK word boundary (0.035em) by the
+    // hole a dropped whitespace segment leaves in the offsets. A saved segmentation carrying the
+    // space inside a word left the segments touching, so every Latin word gap collapsed to the
+    // CJK hair. The edge split in segmentLyricWords is what restores the hole.
+    it('leaves an offset gap at a real space whether the split is saved or default', () => {
+        const words = [
+            { text: "It's", startTime: 0, endTime: 0.8 },
+            { text: 'unbelievable', startTime: 1, endTime: 2 },
+        ];
+        const fullText = "It's unbelievable";
+        const gaps = (source: Line) => {
+            const rendered = buildTemperaSegments(source).filter(segment => segment.text.trim().length > 0);
+            return rendered.slice(1).map((segment, index) => segment.startOffset > rendered[index].endOffset);
+        };
+
+        expect(gaps(line(fullText, 0, 3, words))).toEqual([true]);
+        expect(gaps(line(fullText, 0, 3, words, { wordSegments: ["It's ", 'unbelievable'] }))).toEqual([true]);
+    });
+
     it('falls back losslessly when Intl.Segmenter is unavailable', () => {
         const original = Intl.Segmenter;
         vi.stubGlobal('Intl', { ...Intl, Segmenter: undefined });
@@ -212,6 +231,71 @@ describe('Tempera program compiler', () => {
                 const next = paragraph.lines[index + 1];
                 if (next) expect(compiled.renderEndTime).toBeLessThanOrEqual(next.line.startTime);
             });
+        });
+    });
+
+    it('keeps each complete lyric line in one shot when splitting is disabled', () => {
+        const lines = [
+            line('世界， 再见！', 0, 3.6, [
+                { text: '世界', startTime: 0, endTime: 1.2 },
+                { text: '再见', startTime: 1.8, endTime: 3.4 },
+            ]),
+            line('time time, again.', 4, 7.6, [
+                { text: 'time', startTime: 4, endTime: 4.8 },
+                { text: 'time', startTime: 5, endTime: 5.8 },
+                { text: 'again', startTime: 6.1, endTime: 7.4 },
+            ]),
+        ];
+        const program = compileTemperaProgram(lines, 'whole-lines', { wholeLineLyrics: true });
+        const lyricShots = program.paragraphs.flatMap(paragraph => paragraph.shots.filter(shot => !shot.isBridge));
+
+        expect(lyricShots).toHaveLength(lines.length);
+        lyricShots.forEach((shot, index) => {
+            expect(shot.slices).toHaveLength(1);
+            const slice = shot.slices[0];
+            const compiled = program.paragraphs
+                .flatMap(paragraph => paragraph.lines)
+                .find(candidate => candidate.sourceIndex === slice.lineIndex)!;
+            expect(compiled.segments.slice(slice.segmentStart, slice.segmentEnd).map(segment => segment.text).join(''))
+                .toBe(lines[index].fullText);
+            expect(shot.startTime).toBeGreaterThanOrEqual(lines[index].startTime);
+            expect(shot.lyricEndTime).toBeLessThanOrEqual(lines[index].endTime);
+        });
+        expect(lyricShots[0].endTime).toBeCloseTo(lyricShots[1].startTime, 6);
+    });
+
+    it('never draws decor from the glyphs its own shot is showing', () => {
+        // Whole-line mode makes single-line paragraphs cover their whole line, so the decor pool
+        // has to reach into the rest of the song instead of echoing the words on screen.
+        const alphabets = ['aaaa bbbb', 'cccc dddd', 'eeee ffff', 'gggg hhhh'];
+        const lines = alphabets.map((text, index) => line(text, index * 8, index * 8 + 3, [
+            { text: text.split(' ')[0], startTime: index * 8, endTime: index * 8 + 1.4 },
+            { text: text.split(' ')[1], startTime: index * 8 + 1.6, endTime: index * 8 + 3 },
+        ]));
+        const program = compileTemperaProgram(lines, 'decor-pool', { wholeLineLyrics: true });
+        const lyricShots = program.paragraphs.flatMap(paragraph => paragraph.shots.filter(shot => !shot.isBridge));
+
+        expect(lyricShots).toHaveLength(lines.length);
+        expect(lyricShots.some(shot => shot.decor.fragments.length > 0)).toBe(true);
+        lyricShots.forEach((shot, index) => {
+            const own = new Set(Array.from(alphabets[index].replace(/\s/g, '')));
+            shot.decor.fragments.forEach(fragment => {
+                expect(own.has(fragment.char), `${alphabets[index]} -> ${fragment.char}`).toBe(false);
+            });
+            if (shot.decor.watermark) {
+                expect(own.has(shot.decor.watermark.text[0])).toBe(false);
+            }
+        });
+    });
+
+    it('drops decor rather than echoing the only line in the song', () => {
+        const program = compileTemperaProgram([line('alone', 0, 2)], 'decor-pool-empty', { wholeLineLyrics: true });
+        const lyricShots = program.paragraphs.flatMap(paragraph => paragraph.shots.filter(shot => !shot.isBridge));
+
+        expect(lyricShots.length).toBeGreaterThan(0);
+        lyricShots.forEach(shot => {
+            expect(shot.decor.fragments).toEqual([]);
+            expect(shot.decor.watermark).toBeNull();
         });
     });
 
