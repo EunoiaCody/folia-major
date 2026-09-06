@@ -33,6 +33,7 @@ export const UNLOCK_VIP_SONGS_KEY = 'unlock_vip_songs';
 export const UNLOCK_UNAVAILABLE_SONGS_KEY = 'unlock_unavailable_songs';
 /** 同平台 unblock 不可用时，是否允许跨 provider（酷狗/QQ）搜索同曲替换音源。 */
 export const UNLOCK_CROSS_PROVIDER_FALLBACK_KEY = 'unlock_use_cross_provider_fallback';
+export const ENABLE_TRANSCODE_FALLBACK_KEY = 'folia_enable_transcode_fallback';
 
 /** Gigabytes of cached audio to keep. Zero is the listener asking for no ceiling at all. */
 export const DEFAULT_MEDIA_CACHE_LIMIT_GB = 5;
@@ -137,6 +138,8 @@ export type AudioSettingsState = {
     queueAddBehavior: QueueAddBehavior;
     /** Whether entering the app starts the restored session by itself. Off unless asked for. */
     autoPlayOnLaunch: boolean;
+    /** Electron-only recovery for local and Navidrome formats Chromium cannot decode. */
+    enableTranscodeFallback: boolean;
     audioOutputDeviceId: string;
     audioEqualizerSettings: AudioEqualizerSettings;
     isAudioEqualizerOpen: boolean;
@@ -154,6 +157,7 @@ export type AudioSettingsState = {
     handleSetMediaCacheLimitGb: (gigabytes: number) => void;
     handleSetQueueAddBehavior: (behavior: QueueAddBehavior) => void;
     handleToggleAutoPlayOnLaunch: (enable: boolean) => void;
+    handleToggleTranscodeFallback: (enable: boolean) => void;
     handleSetAudioOutputDeviceId: (deviceId: string) => void;
     handleSetAudioEqualizerSettings: (settings: AudioEqualizerSettings) => void;
     handleApplyAudioSoundPreset: (modeId: AudioEqualizerModeId) => void;
@@ -173,6 +177,10 @@ export const useAudioSettingsStore = create<AudioSettingsState>((set, get) => ({
     mediaCacheLimitGb: readStoredMediaCacheLimitGb(),
     queueAddBehavior: readStoredQueueAddBehavior(),
     autoPlayOnLaunch: getStoredBoolean(AUTO_PLAY_ON_LAUNCH_KEY, false),
+    enableTranscodeFallback: getStoredBoolean(
+        ENABLE_TRANSCODE_FALLBACK_KEY,
+        typeof window !== 'undefined' && Boolean(window.electron?.requestTranscodeFallback),
+    ),
     audioOutputDeviceId: readStoredAudioOutputDeviceId(),
     audioEqualizerSettings: readStoredAudioEqualizerSettings(),
     isAudioEqualizerOpen: false,
@@ -216,6 +224,10 @@ export const useAudioSettingsStore = create<AudioSettingsState>((set, get) => ({
             type: 'info',
             text: i18n.t('notifications.' + (enable ? 'autoPlayOnLaunchOn' : 'autoPlayOnLaunchOff')),
         });
+    },
+    handleToggleTranscodeFallback: (enable) => {
+        setStoredBoolean(ENABLE_TRANSCODE_FALLBACK_KEY, enable);
+        set({ enableTranscodeFallback: enable });
     },
     handleSetAudioOutputDeviceId: (deviceId) => {
         set({ audioOutputDeviceId: deviceId });
@@ -315,6 +327,7 @@ export const selectAudioSettingsSnapshot = (state: AudioSettingsState) => ({
     mediaCacheLimitGb: state.mediaCacheLimitGb,
     queueAddBehavior: state.queueAddBehavior,
     autoPlayOnLaunch: state.autoPlayOnLaunch,
+    enableTranscodeFallback: state.enableTranscodeFallback,
     audioOutputDeviceId: state.audioOutputDeviceId,
     audioEqualizerSettings: state.audioEqualizerSettings,
     isAudioEqualizerOpen: state.isAudioEqualizerOpen,
@@ -329,6 +342,7 @@ export const selectAudioSettingsSnapshot = (state: AudioSettingsState) => ({
     handleSetMediaCacheLimitGb: state.handleSetMediaCacheLimitGb,
     handleSetQueueAddBehavior: state.handleSetQueueAddBehavior,
     handleToggleAutoPlayOnLaunch: state.handleToggleAutoPlayOnLaunch,
+    handleToggleTranscodeFallback: state.handleToggleTranscodeFallback,
     handleSetAudioOutputDeviceId: state.handleSetAudioOutputDeviceId,
     handleSetAudioEqualizerSettings: state.handleSetAudioEqualizerSettings,
     handleApplyAudioSoundPreset: state.handleApplyAudioSoundPreset,
