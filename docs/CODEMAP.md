@@ -10,10 +10,10 @@
 | 区域 | 文件数 |
 | --- | --- |
 | components | 566 |
-| test/dev | 425 |
-| services | 126 |
-| utils | 122 |
-| hooks | 67 |
+| test/dev | 429 |
+| services | 128 |
+| utils | 123 |
+| hooks | 69 |
 | backend/electron | 66 |
 | stores | 34 |
 | 其他 | 22 |
@@ -28,9 +28,9 @@
 
 | 被依赖数 | 模块 |
 | --- | --- |
-| 534 | `src/types.ts` |
-| 72 | `src/utils/appPlaybackGuards.ts` |
-| 61 | `src/types/onlineMusic.ts` |
+| 537 | `src/types.ts` |
+| 73 | `src/utils/appPlaybackGuards.ts` |
+| 66 | `src/types/onlineMusic.ts` |
 | 58 | `src/components/command-palette/types.ts` |
 | 48 | `src/stores/useStatusMessageStore.ts` |
 | 47 | `src/components/visualizer/colorMix.ts` |
@@ -39,10 +39,10 @@
 | 37 | `src/services/onlineMusic/songMetadata.ts` |
 | 36 | `src/stores/usePlaybackStore.ts` |
 | 32 | `src/utils/lyrics/renderHints.ts` |
+| 31 | `src/stores/useAudioSettingsStore.ts` |
 | 30 | `src/utils/lyrics/parserCore.ts` |
+| 29 | `src/services/onlineMusic/omni.ts` |
 | 29 | `src/stores/useAppViewStore.ts` |
-| 28 | `src/components/visualizer/tempera/types.ts` |
-| 28 | `src/types/localLibrary.ts` |
 
 ## 动态注册点
 
