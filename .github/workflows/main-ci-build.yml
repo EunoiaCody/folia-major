@@ -1,0 +1,158 @@
+name: Main CI Build
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: main-ci-build
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    name: Prepare main build metadata
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+
+    steps:
+      - name: Check out Git repository
+        uses: actions/checkout@v6
+
+      - name: Determine main build version
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE_VERSION="$(jq -r .version package.json | sed 's/-.*//')"
+          if [[ ! "${BASE_VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "package.json must contain a semver base version" >&2
+            exit 1
+          fi
+          SHORT_SHA="$(git rev-parse --short=7 HEAD)"
+          echo "version=${BASE_VERSION}-main.${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build main on ${{ matrix.os }}
+    needs: prepare
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+
+    steps:
+      - name: Check out Git repository
+        uses: actions/checkout@v6
+
+      - name: Install Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Rust toolchain
+        if: runner.os == 'Linux' || runner.os == 'Windows'
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+
+      - name: Cache Cargo build
+        if: runner.os == 'Linux'
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: .windowtolayer-src
+
+      - name: Cache wallpaper-helper Cargo build
+        if: runner.os == 'Windows'
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: packaging/windows/wallpaper-helper
+
+      - name: Build wallpaper helper (Windows only)
+        if: runner.os == 'Windows'
+        run: |
+          # Builds packaging/windows/wallpaper-helper (WorkerW attach + raw-input mouse forward)
+          # into build/folia-wallpaper-helper.exe for the win extraResources. No-op elsewhere.
+          node packaging/windows/build-wallpaper-helper.mjs
+
+      - name: Build windowtolayer from upstream + patch (Linux only)
+        if: runner.os == 'Linux'
+        run: |
+          # Shared with local `npm run build:electron*`: fetches the pinned upstream source,
+          # applies packaging/linux/patches/windowtolayer-popup-resilience.patch (git apply fails loudly instead
+          # of shipping a broken build if the revision drifts) and produces
+          # build/windowtolayer + build/windowtolayer-COPYING for extraResources.
+          node packaging/linux/build-windowtolayer.mjs
+
+      - name: Stamp main package metadata
+        shell: bash
+        env:
+          TARGET_VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          node -e "const fs=require('fs'); const pkg=require('./package.json'); pkg.version=process.env.TARGET_VERSION; pkg.foliaReleaseChannel='internal'; fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');"
+
+      - name: Build web app for Electron
+        env:
+          ELECTRON: 'true'
+          APP_VERSION_LABEL: Main
+          APP_RELEASE_CHANNEL: internal
+        run: npm run build
+
+      - name: Package Electron app
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+        run: npx electron-builder --publish never
+
+      - name: Upload packaged artifacts
+        uses: actions/upload-artifact@v6
+        with:
+          name: main-${{ matrix.os }}
+          path: |
+            release/*.dmg
+            release/*.zip
+            release/*.exe
+            release/*.blockmap
+            release/*.yml
+            !release/builder-debug.yml
+            release/*.deb
+            release/*.rpm
+            release/*.tar.gz
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Publish rolling main prerelease
+    runs-on: ubuntu-latest
+    needs: [prepare, build]
+
+    steps:
+      - name: Download packaged artifacts
+        uses: actions/download-artifact@v7
+        with:
+          path: main-artifacts
+
+      - name: Replace rolling main release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release delete main --repo "${GITHUB_REPOSITORY}" --cleanup-tag --yes >/dev/null 2>&1 || true
+          gh api -X DELETE "repos/${GITHUB_REPOSITORY}/git/refs/tags/main" >/dev/null 2>&1 || true
+          mapfile -d '' files < <(find main-artifacts -type f -print0)
+          cat > release-notes.md <<EOF
+          Automated main-branch CI build for commit ${GITHUB_SHA}.
+
+          Version: ${RELEASE_VERSION}
+          Source commit: https://github.com/${GITHUB_REPOSITORY}/commit/${GITHUB_SHA}
+          EOF
+          gh release create main "${files[@]}" --repo "${GITHUB_REPOSITORY}" --title "Main CI Build (${RELEASE_VERSION})" --notes-file release-notes.md --target "${GITHUB_SHA}" --prerelease
