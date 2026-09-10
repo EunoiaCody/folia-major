@@ -47,6 +47,20 @@ jobs:
             RELEASE_FILE_VERSION="$(node -e "const version=require('./package.json').version; if (!/^[0-9]+\\.[0-9]+\\.[0-9]+$/.test(version)) throw new Error('package.json version must be a stable A.B.C version for a manual Realeco release.'); process.stdout.write(version);")"
           else
             COMMIT_MESSAGE="$(git log -1 --format=%B)"
+            # Fork guard: syncing upstream bumps realeco-release via a merge commit whose message
+            # is not `release: vA.B.C`. Treat that as "not a release" and skip gracefully instead
+            # of failing the whole workflow (upstream only ever changes this file via real release
+            # commits, so upstream behavior is unchanged).
+            if [[ ! "${COMMIT_MESSAGE}" =~ ^release:[[:space:]]v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "Skipping Realeco build: commit message '${COMMIT_MESSAGE}' does not match 'release: vA.B.C'."
+              {
+                echo "version="
+                echo "tag="
+                echo "version_valid=false"
+                echo "should_build=false"
+              } >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
             RELEASE_FILE_VERSION="$(COMMIT_MESSAGE="${COMMIT_MESSAGE}" node -e "const fs=require('fs'); const { validateRealecoReleaseMetadata }=require('./shared/realecoReleaseMetadata.cjs'); process.stdout.write(validateRealecoReleaseMetadata({ commitMessage: process.env.COMMIT_MESSAGE, releaseFileContent: fs.readFileSync('realeco-release', 'utf8'), packageVersion: require('./package.json').version }));")"
           fi
 
