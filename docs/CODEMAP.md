@@ -40,6 +40,7 @@
 | 32+ | `src/components/visualizer/definition.ts` |
 | 32+ | `src/services/db.ts` |
 | 32+ | `src/services/onlineMusic/songMetadata.ts` |
+| 32+ | `src/stores/useAudioSettingsStore.ts` |
 | 32+ | `src/stores/usePlaybackStore.ts` |
 | 32+ | `src/stores/useStatusMessageStore.ts` |
 | 32+ | `src/utils/lyrics/renderHints.ts` |
