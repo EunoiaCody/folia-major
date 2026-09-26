@@ -18,6 +18,7 @@ vi.mock('@/services/netease', () => ({
         getArtistDetail: vi.fn(),
         getArtistAlbums: vi.fn(),
         getPersonalizedPlaylists: vi.fn(),
+        getLikedSongs: vi.fn(),
         checkQr: vi.fn(),
         sendLoginCaptcha: vi.fn(),
         verifyLoginCaptcha: vi.fn(),
@@ -383,6 +384,32 @@ describe('neteaseProvider', () => {
     it('rejects an empty cookie without calling the backend', async () => {
         await expect(neteaseProvider.auth!.loginByCookie!('   ')).rejects.toThrow();
         expect(neteaseApi.loginByCookie).not.toHaveBeenCalled();
+    });
+});
+
+describe('neteaseProvider liked song ids', () => {
+    beforeEach(() => vi.clearAllMocks());
+
+    it('returns the ids of a successful response', async () => {
+        vi.mocked(neteaseApi.getLikedSongs).mockResolvedValue({ code: 200, ids: [1, 2, 3] } as any);
+        await expect(neteaseProvider.library!.getLikedSongIds!(7)).resolves.toEqual([1, 2, 3]);
+        expect(neteaseApi.getLikedSongs).toHaveBeenCalledWith(7);
+    });
+
+    it('keeps an empty list when the account really likes nothing', async () => {
+        vi.mocked(neteaseApi.getLikedSongs).mockResolvedValue({ code: 200, ids: [] } as any);
+        await expect(neteaseProvider.library!.getLikedSongIds!(7)).resolves.toEqual([]);
+    });
+
+    // An error body must not read as "likes nothing": the caller would clear every heart.
+    it.each([
+        ['a server error', { code: 502 }, 'unavailable'],
+        ['a missing ids list', { code: 200 }, 'unavailable'],
+        ['no status code', { msg: 'busy' }, 'unavailable'],
+        ['a signed-out session', { code: 301 }, 'auth-required'],
+    ])('rejects %s instead of answering with no likes', async (_label, response, errorCode) => {
+        vi.mocked(neteaseApi.getLikedSongs).mockResolvedValue(response as any);
+        await expect(neteaseProvider.library!.getLikedSongIds!(7)).rejects.toMatchObject({ code: errorCode });
     });
 });
 

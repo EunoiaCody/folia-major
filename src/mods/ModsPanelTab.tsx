@@ -1,17 +1,12 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { AlertCircle, Boxes, ChevronDown, CircleOff, FolderOpen, Power, RefreshCw, TriangleAlert, CircleCheck, FileVideo2, CheckSquare, Square, Upload, X } from 'lucide-react';
+import { AlertCircle, Boxes, ChevronDown, CircleOff, FolderOpen, Power, RefreshCw, TriangleAlert, CircleCheck, FileVideo2, CheckSquare, Square, Upload, X, ShieldCheck, ShieldAlert, ShieldQuestion } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import { useShallow } from 'zustand/react/shallow';
-import type { LyricData, SongResult, Theme, VisualizerMode } from '@/types';
-import { readLyricOffset } from '@/utils/lyrics/lyricOffsetMemory';
+import type { Theme } from '@/types';
+import { DEFAULT_THEME } from '@/services/baseThemes';
 import type { ModRuntimeInfo } from './types';
-import { resolveOnlineLyrics } from '@/utils/onlineLyricsState';
 import { ModSurfaceRenderer } from './ModSurfaceRenderer';
-import { pushRuntimeSnapshot } from './ipc';
 import { useModsStore } from './useModsStore';
-import { useVisualizerSettingsStore } from '../stores/useVisualizerSettingsStore';
-import { useLyricSettingsStore } from '../stores/useLyricSettingsStore';
 import { useThemeSettingsStore } from '../stores/useThemeSettingsStore';
 
 // src/mods/ModsPanelTab.tsx
@@ -20,20 +15,6 @@ import { useThemeSettingsStore } from '../stores/useThemeSettingsStore';
 // panel never reserves a side column and params get the full panel width.
 // Mounted by the command palette's `mods` surface; the whole mod system stays
 // self-contained behind the store.
-
-interface ModsPanelTabProps {
-    currentSong: SongResult | null;
-    theme: Theme | null;
-    visualizerMode: VisualizerMode | null;
-    /**
-     * The lyrics the player is actually rendering right now. Rebuilding them
-     * from `currentSong.onlineLyricsState` alone is not equivalent: an ordinary
-     * online match lives in neither `importedLyrics` nor `onlineOverrideLyrics`,
-     * so a snapshot built that way is empty and export mods reject the song
-     * with export-no-lyrics even though lyrics are on screen.
-     */
-    lyricData: LyricData | null;
-}
 
 /*
  * Maps a loader error code onto its localized message. Codes that have no entry
@@ -49,6 +30,83 @@ const translateModError = (
     return t(`mods.errors.${code}`, { value: code, defaultValue: code });
 };
 
+/*
+ * Everything the trust dialog listed for this mod, as chips: permissions,
+ * experimental opt-ins, embeddable origins, and the internals pin.
+ */
+const describeModGrants = (mod: ModRuntimeInfo): string[] => [
+    ...mod.permissions,
+    ...(mod.experimental ?? []).map((feature) => `experimental:${feature}`),
+    ...(mod.embedOrigins ?? []).map((origin) => `embed:${origin}`),
+    ...(mod.folia ? [`internals:${mod.folia}`] : []),
+];
+
+/*
+ * The signature badge shown in the collapsed row. Unsigned mods get none there
+ * (most third-party mods are unsigned, so a badge would be noise); the expanded
+ * row explains all three states.
+ */
+const SignatureBadge: React.FC<{ mod: ModRuntimeInfo; isDaylight: boolean }> = ({ mod, isDaylight }) => {
+    const { t } = useTranslation();
+    const { status } = mod.signature;
+    if (status === 'verified') {
+        return (
+            <span title={t('mods.signatureVerified')} className={`shrink-0 ${isDaylight ? 'text-emerald-600' : 'text-emerald-300'}`}>
+                <ShieldCheck size={13} />
+            </span>
+        );
+    }
+    if (status === 'invalid') {
+        return (
+            <span title={t('mods.signatureInvalid')} className={`shrink-0 ${isDaylight ? 'text-amber-700' : 'text-amber-300'}`}>
+                <ShieldAlert size={13} />
+            </span>
+        );
+    }
+    return null;
+};
+
+/* One line in the expanded row saying what the signature state means. */
+const SignatureNotice: React.FC<{ mod: ModRuntimeInfo; isDaylight: boolean }> = ({ mod, isDaylight }) => {
+    const { t } = useTranslation();
+    const { status, reason, keyId, keyLabel } = mod.signature;
+    if (status === 'verified') {
+        return (
+            <div className={`flex items-start gap-1.5 text-xs rounded-lg p-2 ${isDaylight ? 'text-emerald-800 bg-emerald-500/10' : 'text-emerald-200 bg-emerald-400/10'}`}>
+                <ShieldCheck size={14} className="mt-px shrink-0" />
+                <span>
+                    <span className="font-medium">{t('mods.signatureVerified')}</span>
+                    {' · '}
+                    {t('mods.signatureVerifiedDetail', { key: keyLabel ? `${keyLabel}, ${keyId}` : keyId })}
+                </span>
+            </div>
+        );
+    }
+    if (status === 'invalid') {
+        const reasonText = t(`mods.signatureReasons.${reason ?? 'malformed'}`, { defaultValue: reason ?? '' });
+        return (
+            <div className={`flex items-start gap-1.5 text-xs rounded-lg p-2 ${isDaylight ? 'text-amber-800 bg-amber-500/10' : 'text-amber-200 bg-amber-400/10'}`}>
+                <ShieldAlert size={14} className="mt-px shrink-0" />
+                <span>
+                    <span className="font-medium">{t('mods.signatureInvalid')}</span>
+                    {' · '}
+                    {t('mods.signatureInvalidDetail', { reason: reasonText })}
+                </span>
+            </div>
+        );
+    }
+    return (
+        <div className={`flex items-start gap-1.5 text-xs rounded-lg p-2 ${isDaylight ? 'text-zinc-600 bg-black/[0.04]' : 'text-white/60 bg-white/5'}`}>
+            <ShieldQuestion size={14} className="mt-px shrink-0" />
+            <span>
+                <span className="font-medium">{t('mods.signatureUnsigned')}</span>
+                {' · '}
+                {t('mods.signatureUnsignedDetail')}
+            </span>
+        </div>
+    );
+};
+
 const statusIcon = (status: string, isDaylight: boolean) => {
     if (status === 'loaded') return <CircleCheck size={13} className={`${isDaylight ? 'text-emerald-600' : 'text-emerald-300'} shrink-0`} />;
     if (status === 'disabled') return <CircleOff size={13} className={`${isDaylight ? 'text-zinc-400' : 'text-white/40'} shrink-0`} />;
@@ -61,13 +119,14 @@ interface ModAccordionItemProps {
     selected: boolean;
     selectionMode: boolean;
     isDaylight: boolean;
+    theme: Theme;
     onToggleExpand: () => void;
     onToggleEnabled: () => void;
     onToggleSelected: () => void;
 }
 
 const ModAccordionItem: React.FC<ModAccordionItemProps> = ({
-    mod, expanded, selected, selectionMode, isDaylight, onToggleExpand, onToggleEnabled, onToggleSelected,
+    mod, expanded, selected, selectionMode, isDaylight, theme, onToggleExpand, onToggleEnabled, onToggleSelected,
 }) => {
     const { t } = useTranslation();
 
@@ -103,6 +162,7 @@ const ModAccordionItem: React.FC<ModAccordionItemProps> = ({
                     </span>
                 ) : statusIcon(mod.status, isDaylight)}
                 <span className="text-xs font-medium truncate flex-1 min-w-0">{mod.name}</span>
+                <SignatureBadge mod={mod} isDaylight={isDaylight} />
                 <button
                     type="button"
                     title={mod.enabled ? t('mods.enabled') : t('mods.disabled')}
@@ -144,9 +204,9 @@ const ModAccordionItem: React.FC<ModAccordionItemProps> = ({
                             {mod.description ? (
                                 <div className="text-xs opacity-70 leading-relaxed">{mod.description}</div>
                             ) : null}
-                            {mod.permissions.length > 0 ? (
+                            {describeModGrants(mod).length > 0 ? (
                                 <div className="flex flex-wrap gap-1">
-                                    {mod.permissions.map((permission) => (
+                                    {describeModGrants(mod).map((permission) => (
                                         <span
                                             key={permission}
                                             className={`px-1.5 py-0.5 rounded ${isDaylight ? 'bg-black/[0.05]' : 'bg-white/5'} text-[10px] opacity-50`}
@@ -155,6 +215,10 @@ const ModAccordionItem: React.FC<ModAccordionItemProps> = ({
                                         </span>
                                     ))}
                                 </div>
+                            ) : null}
+                            <SignatureNotice mod={mod} isDaylight={isDaylight} />
+                            {mod.devSource ? (
+                                <div className="text-[11px] opacity-50">{t('mods.devSourceHint')}</div>
                             ) : null}
                             {mod.trustStale ? (
                                 <div className={`flex items-start gap-1.5 text-xs rounded-lg p-2 ${isDaylight ? 'text-amber-800 bg-amber-500/10' : 'text-amber-200 bg-amber-400/10'}`}>
@@ -170,7 +234,7 @@ const ModAccordionItem: React.FC<ModAccordionItemProps> = ({
                             ) : null}
 
                             {mod.status === 'loaded' ? (
-                                <ModSurfaceRenderer modId={mod.id} />
+                                <ModSurfaceRenderer modId={mod.id} theme={theme} isDaylight={isDaylight} />
                             ) : mod.enabled ? (
                                 <div className="text-xs opacity-50">{t('mods.notLoaded')}</div>
                             ) : (
@@ -184,12 +248,7 @@ const ModAccordionItem: React.FC<ModAccordionItemProps> = ({
     );
 };
 
-const ModsPanelTab: React.FC<ModsPanelTabProps> = ({
-    currentSong,
-    theme,
-    visualizerMode,
-    lyricData,
-}) => {
+const ModsPanelTab: React.FC<{ theme: Theme | null }> = ({ theme }) => {
     const { t } = useTranslation();
     const bridgeAvailable = useModsStore((state) => state.bridgeAvailable);
     const mods = useModsStore((state) => state.mods);
@@ -204,23 +263,6 @@ const ModsPanelTab: React.FC<ModsPanelTabProps> = ({
     const bindEvents = useModsStore((state) => state.bindEvents);
     const logs = useModsStore((state) => state.logs);
 
-    // Lift the current visualizer tunings from the settings store so exports can
-    // reproduce the song's animation verbatim (rather than the default settings).
-    const visualizerTunings = useVisualizerSettingsStore(useShallow((state) => ({
-        classic: state.classicTuning,
-        cadenza: state.cadenzaTuning,
-        partita: state.partitaTuning,
-        fume: state.fumeTuning,
-        claddagh: state.claddaghTuning,
-        cappella: state.cappellaTuning,
-        tilt: state.tiltTuning,
-        diorama: state.dioramaTuning,
-        monet: state.monetTuning,
-        pendolo: state.pendoloTuning,
-        sonnet: state.sonnetTuning,
-        tempera: state.temperaTuning,
-    })));
-    const globalLyricTimelineOffsetMs = useLyricSettingsStore((state) => state.globalLyricTimelineOffsetMs);
     const isDaylight = useThemeSettingsStore(state => state.isDaylight);
 
     const [selectionMode, setSelectionMode] = useState(false);
@@ -336,33 +378,6 @@ const ModsPanelTab: React.FC<ModsPanelTabProps> = ({
         bindEvents();
         void refresh();
     }, [bindEvents, refresh]);
-
-    // The listener's own imported/override choice still wins; what is on screen
-    // is the fallback, which is what an ordinary online match resolves to.
-    const activeLyrics = useMemo(
-        () => resolveOnlineLyrics(currentSong?.onlineLyricsState ?? null, lyricData ?? null),
-        [currentSong?.onlineLyricsState, lyricData],
-    );
-    const lyricTimelineOffsetMs = globalLyricTimelineOffsetMs + (currentSong ? readLyricOffset(currentSong.id) : 0);
-
-    // Publish the currently visible song/theme/lyrics so main-process mods can
-    // act on it. Lyrics objects are replaced by reference when they change, so
-    // this is a natural low-frequency dependency set.
-    useEffect(() => {
-        if (!bridgeAvailable) {
-            return;
-        }
-        void pushRuntimeSnapshot({
-            song: currentSong,
-            songTitle: currentSong?.name ?? null,
-            songArtist: currentSong?.artists?.[0]?.name ?? null,
-            lyricData: activeLyrics,
-            theme,
-            visualizerMode,
-            visualizerTunings,
-            lyricTimelineOffsetMs,
-        });
-    }, [bridgeAvailable, currentSong, activeLyrics, theme, visualizerMode, visualizerTunings, lyricTimelineOffsetMs]);
 
     return (
         <motion.div
@@ -562,6 +577,7 @@ const ModsPanelTab: React.FC<ModsPanelTabProps> = ({
                                 selected={selectedIds.has(mod.id)}
                                 selectionMode={selectionMode}
                                 isDaylight={isDaylight}
+                                theme={theme ?? DEFAULT_THEME}
                                 onToggleExpand={() => selectMod(selectedModId === mod.id ? null : mod.id)}
                                 onToggleEnabled={() => { void handleToggleEnabled(mod.id, !mod.enabled); }}
                                 onToggleSelected={() => toggleSelected(mod.id)}

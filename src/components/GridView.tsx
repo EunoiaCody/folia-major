@@ -1,4 +1,4 @@
-import React, { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
+import React, { startTransition, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { motion, useMotionValue, animate, AnimatePresence, useDragControls } from 'framer-motion';
 import { ChevronLeft, Disc, Download, Play, Plus, Loader2, Heart, ListPlus, Pencil, RefreshCw, Trash2, Star, Tags } from 'lucide-react';
 import GridPanelToggleIndicator from './folia-grid/GridPanelToggleIndicator';
@@ -18,6 +18,25 @@ import { getPlaybackSongKey } from '../utils/appPlaybackGuards';
 import { useFoliaHexViewport } from './folia-grid/useFoliaHexViewport';
 import { PolaroidCard, type GridItem } from './folia-grid/PolaroidCard';
 import { squareGridCardBox } from './folia-grid/gridCardLayout';
+import {
+    resolveStoredFocusIndex,
+    type StoredGridViewNavigationState,
+} from './folia-grid/gridViewRestore';
+import {
+    GRID_CARD_ITEM_ID_ATTR,
+} from './folia-grid/gridMorphContract';
+import {
+    collectionMorphEntranceTravel,
+    collectionMorphFlyIn,
+    collectionMorphSeed,
+    type CollectionMorphPlan,
+} from './collectionOpenMorph/morphGeometry';
+import ActiveGridMarker from './folia-grid/ActiveGridMarker';
+import {
+    buildDuplicateOccurrences,
+    createLazyGridItems,
+    type DuplicateOccurrenceCache,
+} from './folia-grid/lazyGridItems';
 import {
     applyHexCardFrameStyles,
     computeHexCardFrame,
@@ -45,8 +64,9 @@ import { compareLocalFolderSongs, formatLocalAlbumTrackLabel, type LocalAlbumGro
 import { resolveGridViewContextTracks } from './folia-grid/gridViewContextActions';
 import { buildGridSurfaceState, runGridSurfaceAction, type GridSurfaceParams } from './folia-grid/gridSurfaceHandle';
 import { useGridSurfaceRegistration } from '../hooks/useGridSurfaceRegistration';
-import type { MediaId, ProviderCollection } from '../types/onlineMusic';
+import { OmniError, type MediaId, type ProviderCollection } from '../types/onlineMusic';
 import { useSidePanelBottomPx } from '../hooks/usePlayerBottomBarBottomPx';
+import { hasBlockingWindow } from '../utils/keyboardTargets';
 import { useGridViewSettingsStore } from '../stores/useGridViewSettingsStore';
 
 export interface GridViewSourceActions {
@@ -100,15 +120,18 @@ interface GridViewProps {
     sourceActions?: GridViewSourceActions;
     onStatusMessage?: (message: StatusMessage) => void;
     isInteractive?: boolean;
+    /**
+     * Optional shared-element「移形换影」plan. Either way every non-hero card
+     * flies in from outside the viewport toward its grid slot in a distance
+     * sequence; `kind: 'morph'` additionally means the overlay's composite is
+     * currently covering the hero, so the hero stays hidden and dissolves in as
+     * the composite fades, while `kind: 'cascade'` (a push with no covering
+     * composite) must leave the hero visible — hiding it there would just show
+     * an empty slot for 340ms. Absent for every existing caller, so behavior is
+     * unchanged unless the collection morph hands it in.
+     */
+    morphPlan?: CollectionMorphPlan | null;
 }
-
-type StoredGridViewNavigationState = {
-    focusedIndex: number;
-    focusedTrackId?: string | number;
-    dragX: number;
-    dragY: number;
-    searchQuery: string;
-};
 
 const GRID_VIEW_NAVIGATION_PREFIX = 'folia_gridview_state';
 const GRID_VIEW_LAST_INDEX_PREFIX = 'folia_gridview_last_index';
@@ -243,6 +266,7 @@ export const GridView: React.FC<GridViewProps> = ({
     sourceActions,
     onStatusMessage,
     isInteractive = true,
+    morphPlan = null,
 }) => {
     const { t } = useTranslation();
     const bottomBarPanelBottomPx = useSidePanelBottomPx();
@@ -368,6 +392,12 @@ export const GridView: React.FC<GridViewProps> = ({
     const [loading, setLoading] = useState(false);
     const [backgroundLoading, setBackgroundLoading] = useState(false);
     const [backgroundLoadFailed, setBackgroundLoadFailed] = useState(false);
+    // 在线集合加载失败必须和「集合确实是空的」分开显示：两者都渲染成空网格的话，
+    // provider 侧的鉴权、协议或网络故障在界面上就完全不可见。
+    // 存判别式而不是成品文案：翻译要在渲染时做，切换语言才能跟着变。
+    const [loadError, setLoadError] = useState<
+        { kind: 'not-public' } | { kind: 'generic'; message: string } | null
+    >(null);
     const [hasMore, setHasMore] = useState(true);
     const [offset, setOffset] = useState(0);
     const [dailyRecommendationHistoryDates, setDailyRecommendationHistoryDates] = useState<string[]>([]);
@@ -719,8 +749,11 @@ export const GridView: React.FC<GridViewProps> = ({
         if (!pendingTracks) return;
 
         pendingBackgroundTracksRef.current = null;
-        setTracks(pendingTracks);
-        setOffset(pendingBackgroundOffsetRef.current);
+        // 见 loadTracks 里的说明：分页到达的整表更新走 transition，别把动画和交互堵住。
+        startTransition(() => {
+            setTracks(pendingTracks);
+            setOffset(pendingBackgroundOffsetRef.current);
+        });
     }, []);
 
     // Resolves paged online collection tracks through the active provider boundary.
@@ -734,6 +767,7 @@ export const GridView: React.FC<GridViewProps> = ({
     const loadTracks = async (reset = false) => {
         if (usesExternalTracks || !collection || collection.source !== 'online' || loading || (!hasMore && !reset)) return;
         setLoading(true);
+        if (reset) setLoadError(null);
 
         try {
             const currentOffset = reset ? 0 : offset;
@@ -798,9 +832,15 @@ export const GridView: React.FC<GridViewProps> = ({
                 }
 
                 if (responseTracks.length > 0) {
-                    setTracks(responseTracks);
-                    setOffset(responseTracks.length);
-                    setHasMore(hasMoreSync);
+                    // 大歌单的整表更新一律走 transition：这首歌单可能有几千首，分页每 100ms 回来一次，
+                    // 每次都要重算 gridItems（O(N)）并重渲染整个渲染环。用户点开的同时合成层还在飞 ——
+                    // 把它降级成可打断的渲染，React 会在切片之间让浏览器提交帧，动画继续跑、交互不被堵，
+                    // 观感是「列表在后面慢慢补齐」而不是「打开时卡一下」。
+                    startTransition(() => {
+                        setTracks(responseTracks);
+                        setOffset(responseTracks.length);
+                        setHasMore(hasMoreSync);
+                    });
 
                     saveToCache(CACHE_KEY, { tracks: responseTracks, snapshotTime: targetTime, schemaVersion: CACHE_SCHEMA_VERSION });
 
@@ -830,6 +870,9 @@ export const GridView: React.FC<GridViewProps> = ({
             }
         } catch (error) {
             console.error("GridView failed to load tracks:", error);
+            setLoadError(error instanceof OmniError && error.code === 'not-public'
+                ? { kind: 'not-public' }
+                : { kind: 'generic', message: error instanceof Error ? error.message : String(error) });
         } finally {
             setLoading(false);
         }
@@ -871,8 +914,11 @@ export const GridView: React.FC<GridViewProps> = ({
                         pendingBackgroundTracksRef.current = nextTracks;
                         pendingBackgroundOffsetRef.current = currentOffset;
                     } else {
-                        setTracks(nextTracks);
-                        setOffset(currentOffset);
+                        // 分页到达：见上面的说明，整表更新走 transition。
+                        startTransition(() => {
+                            setTracks(nextTracks);
+                            setOffset(currentOffset);
+                        });
                     }
                     saveToCache(CACHE_KEY, { tracks: currentTracks, snapshotTime: targetTime, schemaVersion: CACHE_SCHEMA_VERSION });
 
@@ -1138,32 +1184,16 @@ export const GridView: React.FC<GridViewProps> = ({
         tracks,
     ]);
 
-    // Build the grid spiral coordinates mapping using responsive spacing
+    // 网格项**惰性**塑形（见 lazyGridItems.ts）：length 立刻可用，真对象只在被读到下标时才塑形。
+    // 原来整表 map 一遍，5000 首实测 120ms，而分页每来一页都要重算 —— 大歌单打开时卡在这里。
+    const duplicateOccurrencesRef = useRef<DuplicateOccurrenceCache | null>(null);
     const allGridItems = useMemo((): GridItem[] => {
         if (mode === 'collection') {
             return items || [];
         }
-        const trackIdOccurrences = new Map<string, number>();
-        return displayTracks.map((track, idx) => {
-            const trackKey = getPlaybackSongKey(track);
-            const occurrence = trackIdOccurrences.get(trackKey) ?? 0;
-            trackIdOccurrences.set(trackKey, occurrence + 1);
-
-            return {
-                id: `${trackKey}-${occurrence}`,
-                name: formatSongName(track),
-                searchText: [
-                    track.name,
-                    track.aliases?.join(' '),
-                    track.translatedNames?.join(' '),
-                ].filter(Boolean).join(' '),
-                coverUrl: getSongCoverUrl(track),
-                subtitle: String(idx + 1).padStart(2, '0'),
-                description: track.artists?.map(a => a.name).join(', '),
-                rawTrack: track,
-                rawTrackIndex: idx,
-            };
-        });
+        const { seen, occurrences } = buildDuplicateOccurrences(displayTracks, duplicateOccurrencesRef.current);
+        duplicateOccurrencesRef.current = { source: displayTracks, seen, occurrences };
+        return createLazyGridItems(displayTracks, occurrences);
     }, [mode, items, displayTracks]);
 
     const gridItems = useMemo(() => {
@@ -1242,8 +1272,13 @@ export const GridView: React.FC<GridViewProps> = ({
         renderRing,
         fallbackIndexRef: focusedIndexRef,
     });
-    const gridCoverUrls = useMemo(() => gridItems.map(item => item.coverUrl), [gridItems]);
-    useLocalCoverPreloader(gridCoverUrls, renderedIndexes);
+    // 封面按需取：预加载只需要「视口附近那几个下标」的封面，不必先把整张歌单的 URL 映成数组
+    // （5000 首那种列表里，这个数组以前每页都要重建一次）。
+    const getItemCoverUrl = useCallback(
+        (index: number) => gridItems[index]?.coverUrl,
+        [gridItems],
+    );
+    useLocalCoverPreloader(gridItems.length, getItemCoverUrl, renderedIndexes);
 
     const dragBounds = useMemo(() => {
         if (baseCoords.length === 0) return { left: 0, right: 0, top: 0, bottom: 0 };
@@ -1329,12 +1364,7 @@ export const GridView: React.FC<GridViewProps> = ({
         if (!pendingState || gridItems.length === 0 || baseCoords.length === 0) return;
         if (pendingState.searchQuery && deferredSearchQuery !== pendingState.searchQuery) return;
 
-        const trackIndex = pendingState.focusedTrackId === undefined
-            ? -1
-            : gridItems.findIndex(item => String(item.rawTrack?.id) === String(pendingState.focusedTrackId));
-        const restoredIndex = trackIndex >= 0
-            ? trackIndex
-            : Math.max(0, Math.min(pendingState.focusedIndex, gridItems.length - 1));
+        const restoredIndex = resolveStoredFocusIndex(pendingState, gridItems);
         const restoredCoord = baseCoords[restoredIndex];
         if (!restoredCoord) return;
 
@@ -1418,7 +1448,9 @@ export const GridView: React.FC<GridViewProps> = ({
                 return;
             }
 
-            if (event.key !== 'Escape') {
+            // A window above (e.g. the lyrics timeline opened from the bottom bar) owns its own
+            // Escape; auto-repeat would walk the whole ladder and leave the grid.
+            if (event.key !== 'Escape' || event.repeat || hasBlockingWindow()) {
                 return;
             }
 
@@ -1444,6 +1476,52 @@ export const GridView: React.FC<GridViewProps> = ({
     }, [dragX, dragY, updateRenderedIndexesForViewport]);
 
     // Memoize only the nearby card set so React keeps heavy image/button trees out of the drag hot path
+    // The card the viewport will actually centre on. GridView restores its
+    // scroll/focus from sessionStorage in an EFFECT (after first paint), while
+    // React's focusedIndex is still 0 when the cards first render — radiating
+    // the fly-in from index 0 of a grid that immediately restores elsewhere is
+    // what left the cascade skewed. Reading the same session state GridView
+    // restores from (through the same resolver the restore effect uses) keeps
+    // the origin exact from frame zero; -1 (restored search filter, whose items
+    // are not filtered yet) skips the morph entrance and uses the plain one.
+    const morphHeroIndex = useMemo(() => {
+        try {
+            if (mode === 'tracks' && navigationStorageKey) {
+                const raw = sessionStorage.getItem(navigationStorageKey);
+                if (raw) {
+                    const parsed = JSON.parse(raw) as StoredGridViewNavigationState;
+                    if (parsed.searchQuery) {
+                        return -1;
+                    }
+                    const restored = resolveStoredFocusIndex(parsed, gridItems);
+                    if (restored >= 0) {
+                        return restored;
+                    }
+                }
+            }
+        } catch {
+            // Unreadable session state — fall through to the live focus.
+        }
+        return gridItems.length === 0
+            ? -1
+            : Math.max(0, Math.min(focusedIndex, gridItems.length - 1));
+    }, [focusedIndex, gridItems, mode, navigationStorageKey]);
+
+    const cardFlyInOffset = useMemo(() => {
+        // The hero is the card the restored viewport actually centres on, NOT
+        // index 0: a resumed grid may be scrolled anywhere, and radiating from
+        // a stale index-0 slot skews the whole cascade.
+        const heroIndex = morphHeroIndex;
+        if (!morphPlan || heroIndex < 0 || baseCoords[heroIndex] === undefined) {
+            return null;
+        }
+        const hero = baseCoords[heroIndex];
+        // 入场的推进距离是短距离的「就位」，不是从屏幕外飞进来（见 morphGeometry 的说明）。
+        const reach = collectionMorphEntranceTravel(containerSize);
+        const spacing = Math.max(layoutConfig.spacingX, layoutConfig.spacingY) || 1;
+        return { hero, reach, spacing };
+    }, [baseCoords, containerSize, layoutConfig.spacingX, layoutConfig.spacingY, morphHeroIndex, morphPlan]);
+
     const memoizedCards = useMemo(() => {
         return renderedIndexes.map((idx) => {
             const item = gridItems[idx];
@@ -1457,10 +1535,29 @@ export const GridView: React.FC<GridViewProps> = ({
             const animateEntrance = shouldAnimateItemEntrance(String(item.id));
             const trackKey = String(item.id);
             const isRemovingTrack = removingTrackKeys.has(trackKey);
+            // 「移形换影」: the hero (the card the viewport restores onto + centres)
+            // stays static while `kind === 'morph'` (the overlay's composite is
+            // covering it); every other card that is actually on screen settles
+            // into its slot from a short radial push, staggered by distance.
+            //
+            // 屏外的卡不参与：渲染环本身带 200px 缓冲，那些卡用户根本看不见，却要付一次
+            // 动画（大歌单打开时正是这些并发的动画和首帧的挂载一起把主线程压住）。
+            const cardOnScreen = initialFrame.display !== 'none' && Number.parseFloat(initialFrame.opacity) > 0.05;
+            const isMorphHero = Boolean(morphPlan?.kind === 'morph' && cardFlyInOffset && idx === morphHeroIndex);
+            const isMorphFlyIn = Boolean(morphPlan && cardFlyInOffset && cardOnScreen && !isMorphHero);
+            const morphFlyIn = isMorphFlyIn
+                ? collectionMorphFlyIn(
+                    { x: coord.baseX, y: coord.baseY },
+                    { x: cardFlyInOffset!.hero.baseX, y: cardFlyInOffset!.hero.baseY },
+                    cardFlyInOffset!.spacing,
+                    cardFlyInOffset!.reach,
+                    collectionMorphSeed(String(item.id)),
+                )
+                : null;
             return (
                 <div
                     key={`${mode}-${item.id}`}
-                    data-folia-grid-item-id={String(item.id)}
+                    {...{ [GRID_CARD_ITEM_ID_ATTR]: String(item.id) }}
                     ref={(el) => {
                         if (el) {
                             cardWrapperRefs.current[idx] = el;
@@ -1491,10 +1588,29 @@ export const GridView: React.FC<GridViewProps> = ({
                     } as React.CSSProperties}
                 >
                     <motion.div
-                        initial={animateEntrance ? { opacity: 0, scale: 0.98, rotateY: -90 } : false}
+                        initial={isMorphHero
+                            // 揭晓时带一丝等比放大（0.985 → 1）：纯透明度会读成「闪一下」，
+                            // 一点点尺度收势才是 Apple 那种「内容落定」的手感。
+                            ? { opacity: 0, scale: 0.985 }
+                            : isMorphFlyIn
+                                ? { opacity: 0, x: morphFlyIn!.x, y: morphFlyIn!.y, scale: 0.94 }
+                                : animateEntrance
+                                    ? { opacity: 0, scale: 0.98, rotateY: -90 }
+                                    : false}
                         animate={isRemovingTrack
                             ? { opacity: [1, 1, 0], scale: [1, 0.98, 0.96], rotateY: [0, 180, 180] }
-                            : { opacity: 1, scale: 1, rotateY: 0 }}
+                            : {
+                                // Key set must be identical across branches: if `rotate`
+                                // appears only in the fly-in branch and the plan expires
+                                // mid-flight, the key vanishes from animate and the card
+                                // freezes at its crooked in-between angle forever.
+                                opacity: 1,
+                                x: 0,
+                                y: 0,
+                                scale: 1,
+                                rotate: 0,
+                                rotateY: 0,
+                            }}
                         exit={{
                             opacity: 0,
                             scale: 0.98,
@@ -1503,7 +1619,28 @@ export const GridView: React.FC<GridViewProps> = ({
                         }}
                         transition={isRemovingTrack
                             ? { duration: TRACK_REMOVAL_ANIMATION_MS / 1000, times: [0, 0.72, 1], ease: TRACK_REMOVAL_BEZIER }
-                            : { duration: 0.42, ease: [0.22, 1, 0.36, 1] }}
+                            : isMorphHero
+                                // Reveal while the overlay is still fading out so
+                                // the hero (cover, title, heart/queue buttons)
+                                // dissolves in rather than popping in. 这个延迟只要不晚于
+                                // 合成层自己的淡出起点即可；转场提速后原来那 0.34s 会留下
+                                // 「两边都看不见」的空档。
+                                ? {
+                                    opacity: { delay: 0.12, duration: 0.3, ease: 'easeOut' },
+                                    // 尺度收势比透明度稍长，走 Apple 那条 ease：落定时「稳」下来。
+                                    scale: { delay: 0.12, duration: 0.42, ease: [0.32, 0.72, 0, 1] },
+                                    x: { duration: 0 },
+                                    y: { duration: 0 },
+                                }
+                                : isMorphFlyIn
+                                    // 一条 Apple 的 ease 补间，而不是每张卡一条 spring：
+                                    // 观感上整片网格是「一起落定」的（不会各自过冲），
+                                    // 成本上每帧只做插值，不跑弹簧积分 —— 大歌单打开时
+                                    // 这里同时有几十条动画在跑。
+                                    ? { duration: 0.5, ease: [0.32, 0.72, 0, 1], delay: morphFlyIn!.delay }
+                                    : morphPlan
+                                        ? { duration: 0.01 }
+                                        : { duration: 0.42, ease: [0.22, 1, 0.36, 1] }}
                         style={{
                             transformStyle: 'preserve-3d',
                             transformOrigin: 'center center',
@@ -1597,6 +1734,9 @@ export const GridView: React.FC<GridViewProps> = ({
         removingTrackKeys,
         persistNavigationState,
         shouldAnimateItemEntrance,
+        cardFlyInOffset,
+        morphHeroIndex,
+        morphPlan,
     ]);
 
     // Refs for direct DOM manipulation — eliminates per-card useTransform subscriptions
@@ -1824,6 +1964,7 @@ export const GridView: React.FC<GridViewProps> = ({
 
     return (
         <motion.div
+            data-ponder-page-scope="grid-view-page"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
@@ -1845,6 +1986,10 @@ export const GridView: React.FC<GridViewProps> = ({
                     />
                 </div>
             )}
+            {/* 把「我是当前这层网格」写在卡片容器上：移形换影的测量只在这个子树里找卡片，
+                否则正在退出的上一层网格会被当成落点。订阅关在子组件里，见 ActiveGridMarker。 */}
+            <ActiveGridMarker target={containerRef} />
+
             {/* Back Button */}
             <button
                 onClick={() => {
@@ -1942,8 +2087,12 @@ export const GridView: React.FC<GridViewProps> = ({
                         <span className="text-sm font-semibold font-sans">{t('playlist.loading')}</span>
                     </div>
                 ) : gridItems.length === 0 ? (
-                    <div className="opacity-40 text-sm font-sans">
-                        {hasSearchQuery ? (t('home.gridSearchNoResults')) : (t('home.loadingLibrary'))}
+                    <div className="max-w-md px-6 text-center text-sm font-sans opacity-40">
+                        {loadError && !hasSearchQuery
+                            ? (loadError.kind === 'not-public'
+                                ? t('playlist.loadNotPublic')
+                                : t('playlist.loadFailed', { error: loadError.message }))
+                            : hasSearchQuery ? (t('home.gridSearchNoResults')) : (t('home.loadingLibrary'))}
                     </div>
                 ) : (
                     <motion.div
@@ -2147,6 +2296,9 @@ export const GridView: React.FC<GridViewProps> = ({
 
                             {/* Buttons Area */}
                             <div
+                                // 这一排里有重扫、整理 tag 和删除，删除是不可逆的 ——
+                                // 思索把整块认成一个目标，指着哪一颗都讲得到。
+                                data-ponder={isLocalCollection ? 'local-folder-actions' : 'online-collection-actions'}
                                 className="space-y-2 mt-4 pt-4 border-t shrink-0"
                                 style={{ borderTopColor: 'color-mix(in srgb, var(--text-primary) 12%, transparent)' }}
                             >
@@ -2222,6 +2374,8 @@ export const GridView: React.FC<GridViewProps> = ({
                                     <button
                                         onClick={handleEditModeToggle}
                                         disabled={isSourceActionPending}
+                                        // 思索靠这个属性认出它。类名会改，属性不会。
+                                        data-ponder="grid-view-edit-mode"
                                         className={`w-full py-2.5 rounded-full text-xs font-semibold transition-all flex items-center justify-center gap-1.5 cursor-pointer ${isEditMode ? 'bg-red-500/20 text-red-500 border border-red-500/30' : 'bg-zinc-800/10 dark:bg-zinc-100/10 hover:bg-zinc-900 hover:text-zinc-100 dark:hover:bg-zinc-100 dark:hover:text-zinc-900'}`}
                                     >
                                         {isSourceActionPending ? <Loader2 size={14} className="animate-spin" /> : <Pencil size={14} />}

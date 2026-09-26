@@ -78,12 +78,12 @@ const createContext = (overrides: CommandPaletteContextOverrides = {}): CommandP
             setIsPanelOpen: vi.fn(),
         },
         settings: {
+            toggleRememberHomeCardPosition: vi.fn(),
             openSettings: vi.fn(),
             lyricStaffPolicy: 'smart' as const,
             cycleLyricStaffPolicy: vi.fn(),
             lyricStaffAbsorbMode: 'off' as const,
             cycleLyricStaffAbsorbMode: vi.fn(),
-            setIsUserGuideModalOpen: vi.fn(),
             setAppLanguagePreference: vi.fn(async () => undefined),
             toggleTransparentBackground: vi.fn(),
             toggleDaylightMode: vi.fn(),
@@ -93,6 +93,9 @@ const createContext = (overrides: CommandPaletteContextOverrides = {}): CommandP
             toggleSubtitleOverlayBackground: vi.fn(),
             playbackEntryView: 'player' as const,
             setPlaybackEntryView: vi.fn(),
+            ponderHintVisibility: 'always' as const,
+            setPonderHintVisibility: vi.fn(),
+            togglePonderTouchButton: vi.fn(),
             startPlayerBottomBarPositioning: vi.fn(),
             canStartPlayerBottomBarPositioning: true,
             toggleAlwaysShowPlayerBackButton: vi.fn(),
@@ -101,6 +104,8 @@ const createContext = (overrides: CommandPaletteContextOverrides = {}): CommandP
             canUseGridViewSquareCards: vi.fn(() => true),
             toggleLatticeVignette: vi.fn(),
             toggleLatticeAutoFocusOnSongChange: vi.fn(),
+            toggleReduceLatticeMotion: vi.fn(),
+            toggleFollowSystemReducedMotion: vi.fn(),
             latticePosterTintEnabled: true,
             latticePosterTintUseCustomColor: false,
             latticePosterTintColor: '#161419',
@@ -119,6 +124,8 @@ const createContext = (overrides: CommandPaletteContextOverrides = {}): CommandP
             toggleUnlockUnavailableSongs: vi.fn(),
             unlockUseCrossProviderFallback: true,
             toggleUnlockUseCrossProviderFallback: vi.fn(),
+            toggleNativeMacFullscreenButton: vi.fn(),
+            toggleAutoHideCursorWithPlayerChrome: vi.fn(),
             canAutoScanLocalLibrary: vi.fn(() => false),
             toggleLocalLibraryAutoScan: vi.fn(),
             canReportNeteasePlayback: vi.fn(() => false),
@@ -159,6 +166,8 @@ const createContext = (overrides: CommandPaletteContextOverrides = {}): CommandP
             setVisualizerBackgroundMode: vi.fn(),
             setMonetBackgroundTuning: vi.fn(),
             setLatentBackgroundTuning: vi.fn(),
+            toggleVideoLayer: vi.fn(),
+            pickVideoLayerFile: vi.fn(async () => null),
             usesWordSegmentation: true,
             lyricSegmentation: {
                 record: null,
@@ -372,7 +381,9 @@ describe('command palette registry', () => {
         );
         expect(playerControlSlotsCommand).toBeDefined();
         playerControlSlotsCommand!.execute('', context);
-        expect(context.settings.openSettings).toHaveBeenLastCalledWith('options', 'general');
+        // 必须带上锚点：槽位选择器在「通用」页底部的底部界面那一节里，
+        // 只传页面的话打开的是这一页的顶部，等于没跳过去。
+        expect(context.settings.openSettings).toHaveBeenLastCalledWith('options', 'general', null, 'bottomUiSettings');
 
         const [systemLanguageMatch] = getCommandPaletteMatches('跟随系统');
         expect(systemLanguageMatch.command.id).toBe('settings-language-system');
