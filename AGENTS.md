@@ -65,7 +65,7 @@ skill 只负责地图和编译器都推不出来的东西：口头术语到名�
 
 - `kugou-provider-alignment`
   路径：`skills/kugou-provider-alignment/SKILL.md`
-  用于开发阶段根据 `docs\ku-go-api-docs.md`、`.env.local` 中的真实 KuGou 服务和 `test-results\.dev-credentials` 对齐酷狗 provider 的请求与响应，禁止猜测接口结构。
+  用于开发阶段根据 `docs\ku-go-api-docs.md`、`.env.local` 中的真实 KuGou 服务和 `.dev-credentials\kugou.json` 对齐酷狗 provider 的请求与响应，禁止猜测接口结构。
 
 - `online-song-omni-routing`
   路径：`skills/online-song-omni-routing/SKILL.md`
@@ -74,6 +74,10 @@ skill 只负责地图和编译器都推不出来的东西：口头术语到名�
 - `prepare-folia-release`
   路径：`skills/prepare-folia-release/SKILL.md`
   用于进入稳定版本发布流程：汇总上个稳定版本以来的用户可感知变化，更新新功能介绍、桌面与 Docker 版本元数据，并生成可手动粘贴的 Markdown release note。
+
+- `run-desktop`
+  路径：`skills/run-desktop/SKILL.md`
+  用于启动并驱动 Electron 桌面版（隔离 profile，后台驱动 + 单条命令客户端：截图、点击、填表、页面与主进程求值、读日志），在真实桌面构建里验证主进程、preload IPC 和桌面专属设置的改动。
 
 全局沟通规则：
 
@@ -87,3 +91,8 @@ skill 只负责地图和编译器都推不出来的东西：口头术语到名�
 - 这个仓库的上游是 [chthollyphile/folia-major](https://github.com/chthollyphile/folia-major)
 
 - 2026-09-06 已同步上游 main（08fc072f，v0.7.1-v0.7.3 正式发布 + 其后壁纸模式等未发版提交，即 0.7.4 开发主线）；本地网易云手机号/Cookie 登录、VIP 解锁、无版权替代播放、酷我客户端直连等特性保留（unlock 设置并入 useAudioSettingsStore）
+- 2026-10-16 已同步上游 main（0c8035b4，v0.7.9-v0.7.20 正式发布 + 其后未发版提交）；档子由 0.7.8 升到 0.7.20。本地网易云手机号/Cookie 登录、VIP 解锁、无版权替代播放、酷我客户端直连全部保留：
+  - `neteaseProvider.getAudioSource` 在标准 grant 缺失/仅试听（`freeTrialInfo` 或 jd-musicrep-ts 路径）且 `options.allowUnlock` 时走 unblock → `/song/url/match` 两通道；无解锁时按上游语义抛出 `preview-only` / `not-playable`（不再返回试听地址）。
+  - `unlockService.resolveUnlockedAudioSource` 仍为标准 → 同平台 unblock → 酷我直连 → 酷狗/QQ 跨 provider 替代；播放/预取链路（`onlinePlayback.ts`、`prefetchService.ts`）在 `unlockVipSongs` / `unlockUnavailableSongs` 开启时用该编排，关闭时保持上游单 provider 语义。
+  - 无版权替代统一由 `shouldAutoReplaceUnavailableSong` 控制；grid 集合可播放集合的过滤在 `core/bindings/useCollectionView.ts`（`derivePlayableTracks`/`resolveContextTracks`）里复用同一判断。
+  - 登录弹窗（`library/suites/grid/account/OnlineProviderLoginModal.tsx`）同时保留上游的两栏失败帮助（`QrLoginFailureHelp`）与本地手机号/Cookie 页签。

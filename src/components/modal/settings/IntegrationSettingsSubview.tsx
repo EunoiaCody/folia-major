@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Activity, AlertCircle, Check, Loader2, Server, Trash2 } from 'lucide-react';
+import { Activity, AlertCircle, Check, Loader2, RotateCcw, Server, Trash2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useShallow } from 'zustand/react/shallow';
 import type { NowPlayingConnectionStatus, StageSource, StageStatus, Theme } from '../../../types';
@@ -57,14 +57,20 @@ export type IntegrationStageModel = {
 };
 
 export type IntegrationNavidromeModel = {
+    /** Docker 预置可用且当前不是预置配置：显示「恢复使用服务器预置」。 */
+    navidromeCanRestorePreset: boolean;
     navidromeConfigured: boolean;
+    navidromeRestoreFailed: boolean;
+    navidromeRestoring: boolean;
     navidromeEnabled: boolean;
     navidromePassword: string;
     navidromeServerProfile: NavidromeServerProfile | null;
     navidromeTestStatus: NavidromeTestStatus;
     navidromeUrl: string;
     navidromeUsername: string;
+    navidromeUsesPreset: boolean;
     onClearNavidrome: () => void;
+    onRestoreNavidromePreset: () => Promise<void> | void;
     onToggleNavidrome: (enabled: boolean) => void;
     setNavidromePassword: (value: string) => void;
     setNavidromeUrl: (value: string) => void;
@@ -134,14 +140,19 @@ const IntegrationSettingsSubview: React.FC<IntegrationSettingsSubviewProps> = ({
         playerCapPlayers,
     } = stage;
     const {
+        navidromeCanRestorePreset,
         navidromeConfigured,
         navidromeEnabled,
+        navidromeRestoreFailed,
+        navidromeRestoring,
         navidromePassword,
         navidromeServerProfile,
         navidromeTestStatus,
         navidromeUrl,
         navidromeUsername,
+        navidromeUsesPreset,
         onClearNavidrome,
+        onRestoreNavidromePreset,
         onToggleNavidrome,
         setNavidromePassword,
         setNavidromeUrl,
@@ -174,6 +185,8 @@ const IntegrationSettingsSubview: React.FC<IntegrationSettingsSubviewProps> = ({
         setPlayerCapTimeBasis,
         setPlayerCapSticky,
         setWebStageSource,
+        obsKeepMainWindowAnimation,
+        handleToggleObsKeepMainWindowAnimation,
     } = useStageSettingsStore(useShallow(state => ({
         playerCapHost: state.playerCapHost,
         playerCapPlayer: state.playerCapPlayer,
@@ -184,6 +197,8 @@ const IntegrationSettingsSubview: React.FC<IntegrationSettingsSubviewProps> = ({
         setPlayerCapTimeBasis: state.setPlayerCapTimeBasis,
         setPlayerCapSticky: state.setPlayerCapSticky,
         setWebStageSource: state.setWebStageSource,
+        obsKeepMainWindowAnimation: state.obsKeepMainWindowAnimation,
+        handleToggleObsKeepMainWindowAnimation: state.handleToggleObsKeepMainWindowAnimation,
     })));
     const isDaylight = useThemeSettingsStore(state => state.isDaylight);
     const [playerCapHostDraft, setPlayerCapHostDraft] = useState(playerCapHost);
@@ -405,7 +420,7 @@ const IntegrationSettingsSubview: React.FC<IntegrationSettingsSubviewProps> = ({
                                     {t('options.enableObsBrowserSource') || 'Enable OBS browser source'}
                                 </div>
                                 <div className="text-[10px] opacity-40 max-w-[360px]" style={{ color: 'var(--text-secondary)' }}>
-                                    {t('options.obsBrowserSourceDesc') || 'Renders the full lyrics animation in OBS without audio. When connected, the main window stops rendering the heavy visualizer.'}
+                                    {t('options.obsBrowserSourceDesc') || 'Renders the full lyrics animation in OBS without audio. By default, the main window stops rendering the heavy visualizer while OBS is connected.'}
                                 </div>
                             </div>
                             <button
@@ -457,6 +472,37 @@ const IntegrationSettingsSubview: React.FC<IntegrationSettingsSubviewProps> = ({
                                         </button>
                                     </div>
                                 </div>
+
+                                <div className={`rounded-xl border p-3 flex items-center justify-between gap-4 ${settingsCardClass}`}>
+                                    <div className="space-y-1">
+                                        <div className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
+                                            {t('options.obsKeepMainWindowAnimation') || 'Keep main window animation while OBS is connected'}
+                                        </div>
+                                        <div className="text-[10px] opacity-40 max-w-[360px]" style={{ color: 'var(--text-secondary)' }}>
+                                            {t('options.obsKeepMainWindowAnimationDesc') || 'When on, the main window keeps rendering the lyrics animation while OBS is connected. The main window and OBS both render the heavy animation, which uses more GPU / CPU.'}
+                                        </div>
+                                    </div>
+                                    <button
+                                        type="button"
+                                        onClick={() => handleToggleObsKeepMainWindowAnimation(!obsKeepMainWindowAnimation)}
+                                        className={`w-12 h-6 rounded-full p-1 transition-colors shrink-0 ${!obsKeepMainWindowAnimation ? toggleOffBackgroundClass : ''}`}
+                                        style={{ backgroundColor: obsKeepMainWindowAnimation ? theme?.secondaryColor || 'rgba(114, 119, 134, 1)' : undefined }}
+                                        aria-label={t('options.obsKeepMainWindowAnimation') || 'Keep main window animation while OBS is connected'}
+                                    >
+                                        <div className={`w-4 h-4 rounded-full bg-white shadow-sm transition-transform ${obsKeepMainWindowAnimation ? 'translate-x-6' : 'translate-x-0'}`} />
+                                    </button>
+                                </div>
+
+                                <details className={`rounded-xl border p-3 ${settingsCardClass}`}>
+                                    <summary className="cursor-pointer select-none text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
+                                        {t('options.obsBrowserSourceGuideTitle') || 'How to use'}
+                                    </summary>
+                                    <ol className="mt-3 pl-4 list-decimal space-y-1.5 text-[11px] opacity-60 leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
+                                        {[1, 2, 3, 4, 5, 6].map(step => (
+                                            <li key={step}>{t(`options.obsBrowserSourceGuideStep${step}`)}</li>
+                                        ))}
+                                    </ol>
+                                </details>
                             </div>
                         )}
                     </div>
@@ -806,6 +852,12 @@ const IntegrationSettingsSubview: React.FC<IntegrationSettingsSubviewProps> = ({
                                     </div>
                                 </div>
                             )}
+
+                            {navidromeConfigured && navidromeUsesPreset && (
+                                <p className="text-xs opacity-60" style={{ color: 'var(--text-secondary)' }}>
+                                    {t('navidrome.usingServerPreset') || 'Using the server preset account'}
+                                </p>
+                            )}
                         </>
                     )}
 
@@ -840,6 +892,19 @@ const IntegrationSettingsSubview: React.FC<IntegrationSettingsSubviewProps> = ({
                                 )}
                             </button>
 
+                            {navidromeCanRestorePreset && (
+                                <button
+                                    onClick={() => void onRestoreNavidromePreset()}
+                                    disabled={navidromeRestoring}
+                                    title={t('navidrome.restoreServerPreset') || 'Use server preset'}
+                                    aria-label={t('navidrome.restoreServerPreset') || 'Use server preset'}
+                                    className="px-4 py-2.5 rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2 bg-white/10 hover:bg-white/15 disabled:opacity-40 disabled:cursor-not-allowed"
+                                    style={{ color: 'var(--text-primary)' }}
+                                >
+                                    {navidromeRestoring ? <Loader2 size={16} className="animate-spin" /> : <RotateCcw size={16} />}
+                                </button>
+                            )}
+
                             {navidromeConfigured && (
                                 <button
                                     onClick={onClearNavidrome}
@@ -849,6 +914,12 @@ const IntegrationSettingsSubview: React.FC<IntegrationSettingsSubviewProps> = ({
                                 </button>
                             )}
                         </div>
+                    )}
+
+                    {navidromeEnabled && navidromeCanRestorePreset && navidromeRestoreFailed && (
+                        <p className={`text-xs ${errorTextColor}`}>
+                            {t('navidrome.restoreServerPresetFailed') || 'Could not reach the server preset. Try again later.'}
+                        </p>
                     )}
                 </div>
             </SettingsAnchor>

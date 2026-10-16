@@ -4,11 +4,14 @@ import { useShallow } from 'zustand/react/shallow';
 import type { Theme } from '../../../types';
 import { useLatticeSettingsStore } from '../../../stores/useLatticeSettingsStore';
 import LatticePosterTintControls from '../../shared/LatticePosterTintControls';
+import { settingsDividerClassFor } from './settingsCardClasses';
 
 // src/components/modal/settings/LatticeSettingsSection.tsx
 // 队列拼贴（海报墙）的外观设置，挂在外观页里。读 store 而不是接一串 props：这一区只属于
 // useLatticeSettingsStore，再往 AppearanceSettingsSubview 的 props 里塞成对的值和 setter，
 // 只会把那个已经上千行的文件继续撑大。
+// 实测反馈 1：这些设置（暗角、叠色，以及工具面板里的灯光）同时作用于 bravais 资料库墙，所以分区名曾是「队列拼贴与资料库墙」；
+// 2026-10-10 改名为「拼贴墙外观」（en: Tile wall appearance），一个名字同时盖住两面墙。
 
 type LatticeSettingsSectionProps = {
     settingsCardClass: string;
@@ -58,7 +61,7 @@ const LatticeSettingsSection: React.FC<LatticeSettingsSectionProps> = ({
                     <div className={`w-4 h-4 rounded-full bg-white shadow-sm transition-transform ${latticeVignette ? 'translate-x-6' : 'translate-x-0'}`} />
                 </button>
             </div>
-            <div className="border-t border-black/5 pt-4 dark:border-white/5">
+            <div className={`border-t pt-4 ${settingsDividerClassFor(isDaylight)}`}>
                 <LatticePosterTintControls
                     {...posterTint}
                     isDaylight={isDaylight}

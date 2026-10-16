@@ -3,6 +3,11 @@ import type { AppLanguagePreference } from '../../i18n/config';
 import type { PanelTab } from '../UnifiedPanel';
 import type { AudioEqualizerModeId } from '../../utils/audioEqualizer';
 import type { GridSurfaceActionId } from '../../types/gridCommandSurface';
+import type { LibraryDirectorySurfaceActionId } from '../../library/core/contracts/directory';
+import { useLibraryHomeSurfaceStore } from '../../library/core/state/useLibraryHomeSurfaceStore';
+import type { LibraryArtistSurfaceActionId } from '../../library/core/contracts/artist';
+import type { LibrarySuiteChromeActionMeta } from '../../library/core/contracts/suiteChrome';
+import { libraryChromeCommandId } from '../../library/core/model/suiteChrome';
 import { settingsAnchorSubview, type SettingsAnchorId } from '../modal/settings/navigation/settingsAnchorModel';
 import type { CommandPaletteCommand, CommandPaletteContext, CommandPaletteGroup } from './types';
 
@@ -50,6 +55,7 @@ export const createSettingsCommand = (
     description,
     keywords,
     ...options,
+    ...(initialTab === 'options' && initialSubview ? { settingsTarget: { subview: initialSubview } } : {}),
     execute: (_input, context) => {
         context.settings.openSettings(initialTab, initialSubview);
         return true;
@@ -76,6 +82,7 @@ export const createSettingsAnchorCommand = (
     description,
     keywords,
     ...options,
+    settingsTarget: { subview: settingsAnchorSubview(anchorId), anchorId },
     execute: (_input, context) => {
         context.settings.openSettings('options', settingsAnchorSubview(anchorId), null, anchorId);
         return true;
@@ -108,6 +115,90 @@ export const createGridSurfaceCommand = (
     execute: (_input, context) => {
         context.scope.grid?.run(action);
         return true;
+    },
+});
+
+/**
+ * One action published by the home directory on screen (GridMap's batch selection and hidden view).
+ *
+ * Same contract as the grid surface: `isAvailable` asks the directory's own `availableActions`, which
+ * come from the same Library Core capabilities the batch panel's buttons obey. A command that needs
+ * text (a playlist name) passes the palette input through; `run` refuses an empty one.
+ */
+export const createDirectorySurfaceCommand = (
+    id: string,
+    title: string,
+    description: string,
+    keywords: string[],
+    action: LibraryDirectorySurfaceActionId,
+    icon?: CommandPaletteCommand['icon'],
+    options: Pick<CommandPaletteCommand, 'requiresInput' | 'placeholder'> = {},
+): CommandPaletteCommand => defineCommand({
+    id,
+    group: 'grid',
+    title,
+    description,
+    keywords,
+    icon,
+    ...options,
+    scope: 'directory-surface',
+    isAvailable: context => context?.scope.directory?.getState().availableActions.includes(action) ?? false,
+    execute: (input, context) => context.scope.directory?.run(action, input) ?? false,
+});
+
+/**
+ * One action published by the artist page on screen (its top songs, reload, album retry, entity editing).
+ *
+ * Same contract as the other library surfaces: `isAvailable` asks the page's own `availableActions`,
+ * which are the Library Core artist capabilities intersected with what the rendering suite declares.
+ */
+export const createArtistSurfaceCommand = (
+    id: string,
+    title: string,
+    description: string,
+    keywords: string[],
+    action: LibraryArtistSurfaceActionId,
+    icon?: CommandPaletteCommand['icon'],
+): CommandPaletteCommand => defineCommand({
+    id,
+    group: 'grid',
+    title,
+    description,
+    keywords,
+    icon,
+    scope: 'artist-surface',
+    isAvailable: context => context?.scope.artist?.getState().availableActions.includes(action) ?? false,
+    execute: (_input, context) => context.scope.artist?.run(action) ?? false,
+});
+
+/**
+ * One chrome action a library suite declares in its manifest (`chromeActions`, B2), as a palette command
+ * with the id `<suiteId>-<actionId>`.
+ *
+ * The text, keywords and execute key are static (so the registry contract can enumerate them); whether it
+ * applies is asked of whoever registered the suite chrome right now. It is offered only while that is this
+ * very suite — another suite's chrome on screen, or none, greys it out — and only while the suite's own
+ * handler says it can run. `scopeOwner` lets two suites reuse a key: their chrome is never up together.
+ */
+export const createSuiteChromeCommand = (
+    suiteId: string,
+    action: LibrarySuiteChromeActionMeta,
+): CommandPaletteCommand => defineCommand({
+    id: libraryChromeCommandId(suiteId, action.id),
+    group: 'grid',
+    title: action.title,
+    description: action.description,
+    keywords: [...action.keywords],
+    scope: 'suite-chrome',
+    scopeOwner: suiteId,
+    ...(action.executeShortcut ? { executeShortcut: action.executeShortcut } : {}),
+    isAvailable: (context) => {
+        const chrome = context?.scope.chrome;
+        return chrome?.suiteId === suiteId && chrome.isAvailable(action.id);
+    },
+    execute: (_input, context) => {
+        const chrome = context.scope.chrome;
+        return chrome?.suiteId === suiteId ? chrome.run(action.id) : false;
     },
 });
 
@@ -177,7 +268,9 @@ export const createHomeTabCommand = (
     description,
     keywords,
     execute: (_input, context) => {
-        context.navigation.setHomeViewTab(tab);
+        // The mounted surface also dismisses an owned page when reselecting the current source.
+        // Without it (Lattice, or home hidden under the player) the host's selectHomeViewTab dismisses the page itself.
+        if (!useLibraryHomeSurfaceStore.getState().tabs?.setTab(tab)) context.navigation.selectHomeViewTab(tab);
         context.navigation.navigateToHome();
         return true;
     },

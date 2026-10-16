@@ -15,7 +15,7 @@ type CommandPaletteContextOverrides = {
 const createContext = (overrides: CommandPaletteContextOverrides = {}): CommandPaletteContext => {
     const base: CommandPaletteContext = {
         // The palette's original and still most common surface; the home cases say so explicitly.
-        scope: { view: 'player', filter: null, grid: null },
+        scope: { view: 'player', filter: null, grid: null, directory: null, artist: null, chrome: null },
         shared: {
             t: (_key: string, fallback?: string) => fallback ?? '',
             setStatusMsg: vi.fn(),
@@ -49,6 +49,8 @@ const createContext = (overrides: CommandPaletteContextOverrides = {}): CommandP
             next: vi.fn(),
             prev: vi.fn(),
             queue: [],
+            queuePaletteKeepOpen: false,
+            setQueuePaletteKeepOpen: vi.fn(),
             playSong: vi.fn(),
             shuffleQueue: vi.fn(),
             clearQueue: vi.fn(),
@@ -60,6 +62,8 @@ const createContext = (overrides: CommandPaletteContextOverrides = {}): CommandP
             openAudioEqualizer: vi.fn(),
             applyAudioSoundPreset: vi.fn(),
             runAutoMatchBestLyric: vi.fn(async () => true),
+            toggleCurrentSongPureMusicMark: vi.fn(async () => true),
+            canToggleCurrentSongPureMusicMark: true,
         },
         navigation: {
         navigateToHome: vi.fn(),
@@ -67,7 +71,7 @@ const createContext = (overrides: CommandPaletteContextOverrides = {}): CommandP
         navigateToLattice: vi.fn(),
             focusLatticeCurrentSong: vi.fn(() => true),
             canFocusLatticeCurrentSong: true,
-            setHomeViewTab: vi.fn(),
+            selectHomeViewTab: vi.fn(),
             toggleBrowserFullscreen: vi.fn(async () => true),
             toggleRemoteControlWindow: vi.fn(async () => true),
             toggleMainWindowAlwaysOnTop: vi.fn(async () => true),
@@ -93,6 +97,22 @@ const createContext = (overrides: CommandPaletteContextOverrides = {}): CommandP
             toggleSubtitleOverlayBackground: vi.fn(),
             playbackEntryView: 'player' as const,
             setPlaybackEntryView: vi.fn(),
+            librarySuiteOptions: vi.fn(() => [{ id: 'grid', labelKey: 'libraryTui.rendererGrid' }, { id: 'tui', labelKey: 'libraryTui.rendererTui' }]),
+            activeLibrarySuite: vi.fn(() => 'grid'),
+            canChooseLibrarySuite: vi.fn(() => true),
+            chooseLibrarySuite: vi.fn(),
+            isLibraryWallLookAvailable: vi.fn(() => false),
+            libraryWallLook: vi.fn(() => 'partial' as const),
+            setLibraryWallLook: vi.fn(),
+            libraryWallWindowsPerBlock: vi.fn(() => 3),
+            setLibraryWallWindowsPerBlock: vi.fn(),
+            toggleLibraryWallStackEdges: vi.fn(),
+            libraryWallSeamClear: vi.fn(() => false),
+            toggleLibraryWallSeamClear: vi.fn(),
+            libraryWallSeamStyle: vi.fn(() => 'paper' as const),
+            setLibraryWallSeamStyle: vi.fn(),
+            toggleLibraryWallBackdropLyrics: vi.fn(),
+            toggleLibraryWallBackdropBlur: vi.fn(),
             ponderHintVisibility: 'always' as const,
             setPonderHintVisibility: vi.fn(),
             togglePonderTouchButton: vi.fn(),
@@ -117,6 +137,8 @@ const createContext = (overrides: CommandPaletteContextOverrides = {}): CommandP
             toggleAlwaysShowTrackSwitchButtons: vi.fn(),
             toggleAutoPlayOnLaunch: vi.fn(),
             toggleTranscodeFallback: vi.fn(),
+            togglePlaybackFade: vi.fn(),
+            toggleAutoSkipUnplayable: vi.fn(),
             toggleAlwaysShowMainWindowTitlebar: vi.fn(),
             unlockVipSongs: true,
             toggleUnlockVipSongs: vi.fn(),
@@ -124,6 +146,7 @@ const createContext = (overrides: CommandPaletteContextOverrides = {}): CommandP
             toggleUnlockUnavailableSongs: vi.fn(),
             unlockUseCrossProviderFallback: true,
             toggleUnlockUseCrossProviderFallback: vi.fn(),
+            toggleHideFullscreenButton: vi.fn(),
             toggleNativeMacFullscreenButton: vi.fn(),
             toggleAutoHideCursorWithPlayerChrome: vi.fn(),
             canAutoScanLocalLibrary: vi.fn(() => false),
@@ -135,6 +158,10 @@ const createContext = (overrides: CommandPaletteContextOverrides = {}): CommandP
             toggleVoiceInputPause: vi.fn(),
             togglePreventDisplaySleepDuringPlayback: vi.fn(),
             toggleWallpaperMode: vi.fn(),
+            toggleCloseToTray: vi.fn(),
+            toggleHideRemoteControlTitlebar: vi.fn(),
+            unlockRemoteControl: vi.fn(),
+            toggleObsKeepMainWindowAnimation: vi.fn(),
             toggleWallpaperMacAutohideDock: vi.fn(),
             sleepTimerEnabled: false,
             setSleepTimerEnabled: vi.fn(),
@@ -163,6 +190,7 @@ const createContext = (overrides: CommandPaletteContextOverrides = {}): CommandP
             visualizerBackgroundMode: 'latent',
             setVisualizerMode: vi.fn(),
             toggleRandomVisualizerModePerSong: vi.fn(),
+            toggleGlowBlurQuantize: vi.fn(),
             setVisualizerBackgroundMode: vi.fn(),
             setMonetBackgroundTuning: vi.fn(),
             setLatentBackgroundTuning: vi.fn(),
@@ -601,7 +629,7 @@ describe('command palette registry', () => {
         const [matchLocalTab] = getCommandPaletteMatches('local music');
         expect(matchLocalTab.command.id).toBe('home-local');
         matchLocalTab.command.execute('', context);
-        expect(context.navigation.setHomeViewTab).toHaveBeenCalledWith('local');
+        expect(context.navigation.selectHomeViewTab).toHaveBeenCalledWith('local');
         expect(context.navigation.navigateToHome).toHaveBeenCalled();
     });
 
@@ -836,6 +864,15 @@ describe('command palette registry', () => {
         expect(match.command.id).toBe('visualizer-toggle-random-per-song');
         match.command.execute('', context);
         expect(context.visualizer.toggleRandomVisualizerModePerSong).toHaveBeenCalled();
+    });
+
+    it('toggles the stepped glow radius', () => {
+        const context = createContext();
+        const [match] = getCommandPaletteMatches('发光半径分档');
+
+        expect(match.command.id).toBe('visualizer-toggle-glow-blur-quantize');
+        match.command.execute('', context);
+        expect(context.visualizer.toggleGlowBlurQuantize).toHaveBeenCalled();
     });
 });
 

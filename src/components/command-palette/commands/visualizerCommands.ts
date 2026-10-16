@@ -38,6 +38,7 @@ export const visualizerCommands: CommandPaletteCommand[] = [
     }),
     createVisualizerCommand('sonnet', 'Visualizer: Sonnet', 'Switch to Sonnet visualizer', ['sonnet', '商籁', '文字 pv', 'mg pv', 'vocaloid']),
     createVisualizerCommand('tempera', 'Visualizer: Tempera', 'Switch to Tempera visualizer', ['tempera', '凝彩', 'dancai', 'dc', '色块 pv', 'block pv']),
+    createVisualizerCommand('lumiere', 'Visualizer: Lumiere', 'Switch to Lumiere visualizer', ['lumiere', '绘光', '光束', '舞台光', 'stage light', 'light pv']),
     createVisualizerCommand('classic', 'Visualizer: Luminous', 'Switch to classic visualizer', ['visualizer classic', 'classic', '流光']),
     createVisualizerCommand('cadenza', 'Visualizer: Mindscape', 'Switch to cadenza visualizer', ['visualizer cadenza', 'cadenza', 'mindscape', '心象']),
     createVisualizerCommand('partita', 'Visualizer: Partita', 'Switch to partita visualizer', ['partita', '云阶']),
@@ -63,6 +64,14 @@ export const visualizerCommands: CommandPaletteCommand[] = [
             return true;
         },
     }),
+    createToggleCommand(
+        'visualizer-toggle-glow-blur-quantize',
+        'visualizer',
+        'Fix lyric animation freeze on Linux',
+        'Change how some lyric animations draw their glow, fixing occasional freezes after long playback on Linux',
+        ['lyric freeze', 'freeze fix', 'linux', 'glow', 'fd leak', 'stepped glow', '歌词卡死', '动画卡死', '画面定格', '发光半径分档', '发光', 'faguangbanjing', 'fgbj'],
+        context => context.visualizer.toggleGlowBlurQuantize(),
+    ),
     createToggleCommand('visualizer-toggle-random-per-song', 'visualizer', 'Random visualizer for every song', 'Toggle a random lyric animation mode whenever the song changes', ['random visualizer', 'random animation', 'per song', '随机歌词动画', '每首歌随机动画'], context => context.visualizer.toggleRandomVisualizerModePerSong()),
     {
         id: 'background-monet-full-overlay',

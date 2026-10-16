@@ -1,4 +1,8 @@
-const { app, BrowserWindow, ipcMain, session, screen, dialog, shell, nativeImage, desktopCapturer, Menu, Tray, nativeTheme, powerSaveBlocker, safeStorage, protocol, net: electronNet } = require('electron');
+const { app, BrowserWindow, ipcMain, session, screen, dialog, shell, nativeImage, webContents: electronWebContents, Menu, Tray, nativeTheme, powerSaveBlocker, safeStorage, protocol, crashReporter, net: electronNet } = require('electron');
+// 必须先于其它模块加载：TEMP / TMP 里没展开的 %USERPROFILE% 会让 os.tmpdir() 变成相对路径（#690）。
+for (const repair of require('./tempDirEnvironment.cjs').repairTempDirEnvironment()) {
+  console.warn(`[TempDir] expanded ${repair.key}: ${repair.from} -> ${repair.to}`);
+}
 const fs = require('fs');
 const http = require('http');
 const path = require('path');
@@ -9,16 +13,30 @@ const { createStageApi } = require('./stageApi.cjs');
 const { createModSystem } = require('./modSystem/modSystem.cjs');
 const { MOD_PROTOCOL_PRIVILEGED_SCHEME } = require('./modSystem/modProtocol.cjs');
 const { createWindowPlaybackHandoffStore } = require('./windowPlaybackHandoff.cjs');
+const {
+  REMOTE_CONTROL_HIDE_TITLEBAR_SETTING_KEY,
+  REMOTE_CONTROL_CLICK_THROUGH_SETTING_KEY,
+  readRemoteControlWindowSettings,
+  shouldShowRemoteUnlockTrayItem,
+  applyRemoteControlMouseIgnore,
+} = require('./remoteControlWindowSettings.cjs');
 const wallpaperWatchdogModule = require('./wallpaperWatchdog.cjs');
+const { requestWallpaperEntryConfirmation } = require('./wallpaperEntryRequest.cjs');
 const windowsWallpaperModule = require('./windowsWallpaperController.cjs');
 const { createWindowsWallpaperTargetResolver } = require('./windowsWallpaperTarget.cjs');
 const { createWindowsWallpaperMouseInjector } = require('./windowsWallpaperMouse.cjs');
 const macWallpaperModule = require('./macWallpaperController.cjs');
 const { createKugouApiBridge } = require('./kugouApiBridge.cjs');
+const { createExternalUrlOpener } = require('./externalUrlPolicy.cjs');
+const { createSenderGuardedHandler } = require('./ipcAccessGuard.cjs');
+const { createBodianApiBridge } = require('./bodianApiBridge.cjs');
+const { createBodianMediaPolicy } = require('./bodian/mediaCors.cjs');
 const { createQqAuthSessionRepository } = require('./qqAuthSessionRepository.cjs');
 const { DEFAULT_DISCORD_APPLICATION_ID, createDiscordPresenceController } = require('./discordPresence.cjs');
 const { createVoiceInputPauseMonitor } = require('./voiceInputPause.cjs');
 const { createDisplaySleepBlocker } = require('./displaySleepBlocker.cjs');
+const { createVideoExportFileWriter } = require('./videoExportFileWriter.cjs');
+const { finalizeVideoExportFile } = require('./videoExportMp4.cjs');
 const { createLyricApi } = require('./lyricApi.cjs');
 const { createLocalCoverAssetStore, getLocalCoverAssetDirectory } = require('./localCoverAssets.cjs');
 const {
@@ -41,8 +59,10 @@ const { sanitizeDualTheme: sanitizeGeneratedDualTheme } = require('../shared/the
 const {
   detectOpenAICompatibleProvider,
   normalizeOpenAIChatCompletionsUrl,
+  runAiConnectionTest,
   runAiJsonCompletion,
 } = require('./aiTextClient.cjs');
+const { createAiCredentialStore, isAiCredentialKey, isReservedAiCredentialKey } = require('./aiCredentialStore.cjs');
 const {
   SEGMENTATION_GEMINI_GENERATION_CONFIG,
   SEGMENTATION_JSON_SCHEMA,
@@ -182,7 +202,19 @@ const transcodeService = createTranscodeService({
 // KuGou credentials stay inside the main process and are encrypted lazily after Electron is ready.
 // The bridge refuses Linux's plaintext `basic_text` fallback and degrades to an in-memory session.
 const kugouApiBridge = createKugouApiBridge({ store, safeStorage });
+const bodianMediaPolicy = createBodianMediaPolicy();
+const bodianApiBridge = createBodianApiBridge({ store, safeStorage,
+  onAudioSource: url => bodianMediaPolicy.register(url),
+  requestFactory: (options, onResponse) => {
+    const request = electronNet.request(options);
+    request.on('response', onResponse);
+    return request;
+  },
+});
 const qqAuthSessionRepository = createQqAuthSessionRepository({ store, safeStorage });
+// AI API keys are sealed with safeStorage instead of sitting in config.json as plaintext, and never
+// leave the main process: the renderer only sees AI_API_KEYS_CONFIGURED (#586).
+const aiCredentials = createAiCredentialStore({ store, safeStorage });
 
 // --- Desktop wallpaper mode (Wayland layer-shell via windowtolayer / X11 desktop window) ---
 // Settings keys follow the existing electron-store key/value chain; values are normalized here in
@@ -1566,6 +1598,7 @@ const mainLocale = {
     trayShowWindow: '显示窗口',
     trayHideWindow: '隐藏窗口',
     trayOpenRemote: '遥控窗口',
+    trayUnlockRemote: '解锁遥控窗口',
     trayTransparentBackground: '透明背景',
     trayToggleClickThrough: '点击穿透',
     trayAlwaysOnTop: '窗口置顶',
@@ -1587,6 +1620,7 @@ const mainLocale = {
     trayShowWindow: 'Show Window',
     trayHideWindow: 'Hide Window',
     trayOpenRemote: 'Remote Window',
+    trayUnlockRemote: 'Unlock Remote Window',
     trayTransparentBackground: 'Transparent Background',
     trayToggleClickThrough: 'Click-Through',
     trayAlwaysOnTop: 'Always on Top',
@@ -1608,6 +1642,7 @@ const mainLocale = {
     trayShowWindow: 'Tampilkan Jendela',
     trayHideWindow: 'Sembunyikan Jendela',
     trayOpenRemote: 'Jendela Remote',
+    trayUnlockRemote: 'Buka Kunci Jendela Remote',
     trayTransparentBackground: 'Latar Belakang Transparan',
     trayToggleClickThrough: 'Click-Through',
     trayAlwaysOnTop: 'Selalu di Atas',
@@ -1703,13 +1738,46 @@ const crashLog = createCrashLog({
   getLocale: getMainLocale,
   onLine: runtimeLine,
 });
+// Keep native crash dumps beside the text reports so one folder contains the evidence needed
+// to identify the faulting module. Dumps stay on this machine until the user shares them.
+if (crashLog.dir) {
+  const crashDumpDir = path.join(crashLog.dir, 'crash-dumps');
+  try {
+    fs.mkdirSync(crashDumpDir, { recursive: true });
+    app.setPath('crashDumps', crashDumpDir);
+  } catch (error) {
+    console.warn('[Crash] Could not place crash dumps beside logs', error);
+  }
+}
+try {
+  crashReporter.start({ uploadToServer: false });
+} catch (error) {
+  console.warn('[Crash] Native crash dumps are unavailable', error);
+}
+
+const RENDERER_CRASH_RELOAD_WINDOW_MS = 60_000;
+const MAX_RENDERER_CRASH_RELOADS = 2;
+
+// Limit automatic reloads to avoid trapping the user in a crash loop.
+function shouldReloadMainRenderer(win, details) {
+  if (details?.reason !== 'crashed' || !win || win.isDestroyed() || isWallpaperModeEnabled()) {
+    return false;
+  }
+  const now = Date.now();
+  win.__rendererCrashReloads = (win.__rendererCrashReloads || [])
+    .filter(at => now - at < RENDERER_CRASH_RELOAD_WINDOW_MS);
+  return win.__rendererCrashReloads.length < MAX_RENDERER_CRASH_RELOADS;
+}
+
 installCrashHandlers({
   app,
   crashLog,
-  // 壁纸模式对渲染进程崩溃有自己的恢复路径：Linux 的 windowtolayer watchdog 会重启进程回到普通
-  // 窗口，Windows / macOS 就地 reload 页面。两处都只认 reason === 'crashed'，这里跟着它们走。
-  // 崩溃文件照写，只是不弹窗——桌面正在自己恢复，弹出来的框用户除了关掉别无选择。
-  isRendererCrashRecovered: (details) => details?.reason === 'crashed' && isWallpaperModeEnabled(),
+  // 壁纸模式沿用自己的恢复路径；普通主窗口短时间内最多自动重载两次。
+  // 恢复期间仍写日志，但不弹出会打断恢复的提示框。
+  isRendererCrashRecovered: (details, contents) => details?.reason === 'crashed' && (
+    isWallpaperModeEnabled()
+    || (contents === mainWindow?.webContents && shouldReloadMainRenderer(mainWindow, details))
+  ),
 });
 
 
@@ -1725,12 +1793,17 @@ let latestObsBrowserSourceAudio = null;
 const obsBrowserSourceClients = new Set();
 let remoteControlAlwaysOnTop = false;
 let remoteControlSkipTaskbarEnabled = false;
+let remoteControlHideTitlebarEnabled = false;
+let remoteControlClickThroughEnabled = false;
 let mainWindowAlwaysOnTop = false;
 let mainWindowClickThroughEnabled = false;
 let mainWindowClickThroughUnlockHover = false;
 let mainWindowClickThroughUnlockHoverTimer = null;
 let mainWindowSkipTaskbarEnabled = false;
 let videoExportWindowRestoreState = null;
+// Chromium's fragmented MP4 leaves the movie duration at the first fragment (#549); patch it
+// from the fragment timeline once recording ends.
+const videoExportFileWriter = createVideoExportFileWriter({ finalizeFile: finalizeVideoExportFile });
 let autoUpdater = null;
 // Backed by the settings store so a handoff survives a full process relaunch (wallpaper mode)
 const windowPlaybackHandoffStore = createWindowPlaybackHandoffStore({
@@ -1743,8 +1816,11 @@ let windowStateSaveTimer = null;
 let wallpaperModeRelaunchTimer = null;
 let wallpaperModeRelaunchGeneration = 0;
 const x11WallpaperWindows = new WeakSet();
+// Must match CLICK_THROUGH_UNLOCK_HOTSPOT in src/utils/clickThroughUnlockHotspot.ts (the renderer
+// runs the same hit test on mousemove). The width covers the unlock button both at right-[180px]
+// and at right-[224px] (titlebar showing the fullscreen button).
 const MAIN_WINDOW_CLICK_THROUGH_UNLOCK_HOTSPOT = {
-  width: 48,
+  width: 84,
   height: 40,
   rightInset: 176,
   topInset: 4,
@@ -1771,6 +1847,7 @@ const OBS_BROWSER_SOURCE_PORT_SETTING_KEY = 'OBS_BROWSER_SOURCE_PORT';
 const LYRIC_API_ENABLED_SETTING_KEY = 'LYRIC_API_ENABLED';
 const DISCORD_RICH_PRESENCE_ENABLED_SETTING_KEY = 'DISCORD_RICH_PRESENCE_ENABLED';
 const MINIMIZE_TO_TRAY_SETTING_KEY = 'MINIMIZE_TO_TRAY';
+const CLOSE_TO_TRAY_SETTING_KEY = 'CLOSE_TO_TRAY';
 const HIDE_TASKBAR_ICON_SETTING_KEY = 'HIDE_TASKBAR_ICON';
 const REMOTE_CONTROL_ALWAYS_ON_TOP_SETTING_KEY = 'REMOTE_CONTROL_ALWAYS_ON_TOP';
 const REMOTE_CONTROL_SKIP_TASKBAR_SETTING_KEY = 'REMOTE_CONTROL_SKIP_TASKBAR';
@@ -1889,11 +1966,14 @@ function readStoredBoolean(settingKey, fallback = false) {
 
 function getPublicSettings() {
   return {
-    ...store.store,
+    ...aiCredentials.toPublicSettings(store.store),
     [MINIMIZE_TO_TRAY_SETTING_KEY]: readStoredBoolean(MINIMIZE_TO_TRAY_SETTING_KEY, false),
+    [CLOSE_TO_TRAY_SETTING_KEY]: readStoredBoolean(CLOSE_TO_TRAY_SETTING_KEY, false),
     [HIDE_TASKBAR_ICON_SETTING_KEY]: readStoredBoolean(HIDE_TASKBAR_ICON_SETTING_KEY, false),
     [REMOTE_CONTROL_ALWAYS_ON_TOP_SETTING_KEY]: readStoredBoolean(REMOTE_CONTROL_ALWAYS_ON_TOP_SETTING_KEY, true),
     [REMOTE_CONTROL_SKIP_TASKBAR_SETTING_KEY]: readStoredBoolean(REMOTE_CONTROL_SKIP_TASKBAR_SETTING_KEY, false),
+    [REMOTE_CONTROL_HIDE_TITLEBAR_SETTING_KEY]: readStoredBoolean(REMOTE_CONTROL_HIDE_TITLEBAR_SETTING_KEY, false),
+    [REMOTE_CONTROL_CLICK_THROUGH_SETTING_KEY]: readStoredBoolean(REMOTE_CONTROL_CLICK_THROUGH_SETTING_KEY, false),
     [MAIN_WINDOW_ALWAYS_ON_TOP_SETTING_KEY]: readStoredBoolean(MAIN_WINDOW_ALWAYS_ON_TOP_SETTING_KEY, false),
     [TRANSPARENT_PLAYER_BACKGROUND_SETTING_KEY]: readStoredBoolean(TRANSPARENT_PLAYER_BACKGROUND_SETTING_KEY, false),
     [DISCORD_RICH_PRESENCE_ENABLED_SETTING_KEY]: readStoredBoolean(DISCORD_RICH_PRESENCE_ENABLED_SETTING_KEY, false),
@@ -1965,6 +2045,11 @@ function broadcastObsBrowserSourceStatus() {
 mainWindowSkipTaskbarEnabled = readStoredBoolean(HIDE_TASKBAR_ICON_SETTING_KEY, false);
 remoteControlAlwaysOnTop = readStoredBoolean(REMOTE_CONTROL_ALWAYS_ON_TOP_SETTING_KEY, true);
 remoteControlSkipTaskbarEnabled = readStoredBoolean(REMOTE_CONTROL_SKIP_TASKBAR_SETTING_KEY, false);
+{
+  const remoteWindowSettings = readRemoteControlWindowSettings(readStoredBoolean);
+  remoteControlHideTitlebarEnabled = remoteWindowSettings.hideTitlebar;
+  remoteControlClickThroughEnabled = remoteWindowSettings.clickThrough;
+}
 mainWindowAlwaysOnTop = readStoredBoolean(MAIN_WINDOW_ALWAYS_ON_TOP_SETTING_KEY, false);
 
 const stageApi = createStageApi({
@@ -1976,7 +2061,7 @@ const stageApi = createStageApi({
   stageApiTokenSettingKey: STAGE_API_TOKEN_SETTING_KEY,
   stageApiPortSettingKey: STAGE_API_PORT_SETTING_KEY,
   defaultStageApiPort: DEFAULT_STAGE_API_PORT,
-  getNeteasePort: () => assignedPort,
+  getNeteasePort: () => neteaseBackend.getPort(),
 });
 
 const lyricApi = createLyricApi({
@@ -2099,7 +2184,7 @@ function saveWindowState(win, options = {}) {
   // A wallpaper window's geometry is dictated by the display; persisting it would clobber the
   // bounds a normal window restores to after leaving wallpaper mode (same reason as the X11
   // guards — the Windows wallpaper path just has no separate window set to check against).
-  if (!win || win.isDestroyed() || isX11WallpaperMode() || x11WallpaperWindows.has(win) || win.__wallpaperGeometry === true) {
+  if (!win || win.isDestroyed() || isX11WallpaperMode() || x11WallpaperWindows.has(win) || win.__wallpaperGeometry === true || win.__transparentFullscreen === true) {
     return;
   }
 
@@ -2123,6 +2208,26 @@ function saveWindowState(win, options = {}) {
   pendingWindowStateSave = null;
   clearWindowStateSaveTimer();
   persistWindowStateSnapshot(snapshot);
+}
+
+// Electron sizes Windows transparent windows to the display without updating isFullScreen().
+// Track that path per window so F11 can restore its original bounds on the next press.
+function isMainWindowFullscreen(win) {
+  return win.__transparentFullscreen === true || win.isFullScreen();
+}
+
+function setMainWindowFullscreen(win, fullscreen) {
+  if (process.platform === 'win32' && win.__wallpaperWindowTransparent === true) {
+    if (isMainWindowFullscreen(win) === fullscreen) {
+      return;
+    }
+    if (fullscreen) {
+      saveWindowState(win);
+      win.__transparentFullscreenRestoreBounds = win.getBounds();
+    }
+    win.__transparentFullscreen = fullscreen;
+  }
+  win.setFullScreen(fullscreen);
 }
 
 function isWindowsThumbarSupported() {
@@ -2355,6 +2460,38 @@ function applyRemoteControlSkipTaskbar(win) {
   return remoteControlSkipTaskbarEnabled;
 }
 
+function buildRemoteControlWindowSettings() {
+  return {
+    hideTitlebar: remoteControlHideTitlebarEnabled,
+    clickThrough: remoteControlClickThroughEnabled,
+  };
+}
+
+// Applies click-through to the remote window and tells its renderer about both switches.
+function applyRemoteControlWindowPresentation(win) {
+  if (!win || win.isDestroyed()) {
+    return false;
+  }
+
+  applyRemoteControlMouseIgnore(win, remoteControlClickThroughEnabled);
+  if (!win.webContents.isDestroyed()) {
+    win.webContents.send('remote-control-window-settings-changed', buildRemoteControlWindowSettings());
+  }
+  return true;
+}
+
+// Tray / command palette unlock path: persist, apply, and let the main renderer's store follow.
+function setRemoteControlClickThroughEnabled(enabled) {
+  remoteControlClickThroughEnabled = Boolean(enabled);
+  store.set(REMOTE_CONTROL_CLICK_THROUGH_SETTING_KEY, remoteControlClickThroughEnabled);
+  applyRemoteControlWindowPresentation(remoteControlWindow);
+  refreshTrayMenu();
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('wallpaper-mode-changed', getPublicSettings());
+  }
+  return remoteControlClickThroughEnabled;
+}
+
 function applyMainWindowAlwaysOnTop() {
   if (!mainWindow || mainWindow.isDestroyed()) {
     return false;
@@ -2485,6 +2622,12 @@ function refreshTrayMenu() {
         }
       },
     },
+    ...(shouldShowRemoteUnlockTrayItem({ remoteOpen, clickThrough: remoteControlClickThroughEnabled }) ? [{
+      label: locale.trayUnlockRemote,
+      click: () => {
+        setRemoteControlClickThroughEnabled(false);
+      },
+    }] : []),
     { type: 'separator' },
     {
       label: locale.trayDesktopLyricMode,
@@ -2508,6 +2651,13 @@ function refreshTrayMenu() {
       checked: isWallpaperModeEnabled(),
       click: () => {
         const nextEnabled = !isWallpaperModeEnabled();
+        // Entering is a user-initiated switch, so the renderer asks for confirmation first and
+        // then enters through save-settings. Leaving never needs one.
+        if (nextEnabled && requestWallpaperEntryConfirmation({ mainWindow, focusMainWindow, isClickThroughActive: () => mainWindowClickThroughEnabled })) {
+          // The click already flipped the checkbox; nothing is entered until the user confirms.
+          refreshTrayMenu();
+          return;
+        }
         // NOTE: no Electron window calls here. Calling setAlwaysOnTop/setIgnoreMouseEvents
         // on the window right before the entry poisons the upcoming simple-full-screen
         // presentation (measured on-device: the content is presented 33pt low, leaving an
@@ -2780,7 +2930,8 @@ function setupCorsBypassHandlers() {
         hostname === 'y.gtimg.cn' ||
         hostname === 'kugou.com' ||
         hostname.endsWith('.kugou.com') ||
-        hostname === 'amll-ttml-db.stevexmh.net';
+        // Bodian audio and cover CDNs may omit CORS headers needed by Web Audio and canvas/WebGL.
+        bodianMediaPolicy.allows(details);
     } catch (error) {
       isTargetDomain = false;
     }
@@ -2794,6 +2945,8 @@ function setupCorsBypassHandlers() {
 
     callback({ cancel: false, responseHeaders });
   });
+
+  ses.webRequest.onBeforeRedirect(details => bodianMediaPolicy.followRedirect(details));
 
   ses.webRequest.onErrorOccurred({ urls: ['*://*.kugou.com/*'] }, details => {
     const requestInfo = getKugouMediaRequestInfo(details);
@@ -2828,12 +2981,15 @@ function isAllowedLyricProxyHost(hostname) {
     hostname.endsWith('.kugou.com') ||
     hostname === 'kgimg.com' ||
     hostname.endsWith('.kgimg.com') ||
-    hostname === 'amll-ttml-db.stevexmh.net'
+    hostname === 'api.amll.dev'
   );
 }
 
+// AMLL TTML DB 官方 API（#515）。UA 由渲染进程按构建信息拼好放在请求头里，这里原样转发。
+const AMLL_API_TIMEOUT_MS = 5000;
+
 function isAmllDbHost(hostname) {
-  return hostname === 'amll-ttml-db.stevexmh.net';
+  return hostname === 'api.amll.dev';
 }
 
 async function proxyLyricRequest(targetUrlStr, init = {}) {
@@ -2860,21 +3016,11 @@ async function proxyLyricRequest(targetUrlStr, init = {}) {
     method: typeof init?.method === 'string' ? init.method : 'GET',
     headers,
     body: init?.body,
+    ...(isAmllDbRequest ? { signal: AbortSignal.timeout(AMLL_API_TIMEOUT_MS) } : {}),
   });
 
   if (isAmllDbRequest) {
     console.log(`[AMLL Proxy] Response ${response.status} ${targetUrl.toString()}`);
-  }
-
-  if (isAmllDbRequest && response.status === 404) {
-    console.log(`[AMLL Proxy] Convert 404 -> 204 ${targetUrl.toString()}`);
-    return {
-      ok: true,
-      status: 204,
-      statusText: 'No Content',
-      headers: {},
-      bodyText: '',
-    };
   }
 
   const normalizedHeaders = {};
@@ -3392,14 +3538,19 @@ async function openUpdateReleasePage(version) {
   return true;
 }
 
-async function openExternalUrl(url) {
-  if (typeof url !== 'string' || !url.trim()) {
-    return false;
-  }
-
-  await shell.openExternal(url.trim());
-  return true;
-}
+// External links are restricted to http(s) before reaching shell.openExternal: any other scheme
+// would be handed to the OS as a protocol launch (file:// opens local paths, ms-settings: reaches
+// system panes, anything else depends on what the machine has registered). Scope, stated plainly:
+// this limits what an untrusted URL can trigger once a renderer is compromised or a compromised
+// surface feeds strings here - it is not privilege escalation by itself, and the registered protocol
+// handlers decide the impact. Every in-app caller passes a plain https URL, so the allowlist costs
+// nothing. The validation and the opener live in externalUrlPolicy.cjs so both can be loaded and
+// tested without starting the app; this file wires the production shell into that factory.
+const openExternalUrl = createExternalUrlOpener({
+  openExternal: (resolved) => shell.openExternal(resolved),
+  // 不把被拒的字符串写进日志：它本身就是不可信内容。
+  onBlocked: () => console.warn('[main] blocked openExternal for a non-http(s) URL'),
+});
 
 function scheduleStartupUpdateCheck() {
   if (isDevUpdatePreviewEnabled()) {
@@ -3682,19 +3833,7 @@ ${isPureMusic && songTitle ? `Song title: ${songTitle}\n` : ''}Source snippet:
 ${snippet}`;
 }
 
-// Provide Netease API unblock parameter as requested
-process.env.ENABLE_GENERAL_UNBLOCK = 'false';
-
-// Issue: Netease API module reads 'anonymous_token' synchronously from tmp dir upon require.
-// If not present, Electron crashes with ENOENT. Pre-create the file, then hydrate the
-// package's runtime state in the order required by the current api-enhanced build.
 const fsp = fs.promises;
-const os = require('os');
-const tokenPath = path.resolve(os.tmpdir(), 'anonymous_token');
-const xeapiPublicKeyPath = path.resolve(os.tmpdir(), 'xeapi_public_key');
-if (!fs.existsSync(tokenPath)) {
-  fs.writeFileSync(tokenPath, '', 'utf-8');
-}
 
 async function ensureAudioCacheDirectory() {
   await fsp.mkdir(getAudioCacheDirectory(), { recursive: true });
@@ -3957,217 +4096,36 @@ async function clearCoverCacheDirectory() {
   }
 }
 
-const { register_anonimous } = require('@neteasecloudmusicapienhanced/api/main');
-const { getXeapiPublicKey } = require('@neteasecloudmusicapienhanced/api/util/xeapiKey');
-const {
-  cookieToJson,
-  generateDeviceId,
-  generateRandomChineseIP,
-} = require('@neteasecloudmusicapienhanced/api/util/index');
-const { serveNcmApi } = require('@neteasecloudmusicapienhanced/api/server');
-const {
-  refreshAnonymousToken,
-  resolveXeapiPublicKey,
-} = require('./neteaseApiStartup.cjs');
-const {
-  isModuleNotFound: isQqApiModuleNotFound,
-  startQqApi: startQqApiServer,
-} = require('./qqApiStartup.cjs');
+const { createNetworkRecorder } = require('./networkRecorder.cjs');
+const { createNeteaseBackend } = require('./neteaseBackend.cjs');
+const { createQqBackend } = require('./qqBackend.cjs');
+const { registerLoginBackendIpc } = require('./loginBackendIpc.cjs');
 
-const net = require('net');
-// null until serveNcmApi is actually listening. A numeric fallback used to be handed to the
-// renderer on failure, which turned "backend never started" into an opaque fetch error.
-let assignedPort = null;
-const NETEASE_API_STATUS_CHANNEL = 'netease-api-status-changed';
-let neteaseApiStatus = {
-  status: 'starting',
-  port: null,
-  error: null,
-  updatedAt: Date.now(),
-};
+// 内嵌后端（网易、QQ）的出站连接记录：要在任何后端发出请求之前开始订阅。
+const networkRecorder = createNetworkRecorder();
+networkRecorder.start();
 
-function serializeError(error) {
-  if (error instanceof Error && error.message) {
-    return error.message;
-  }
-
-  if (typeof error === 'string' && error.trim()) {
-    return error;
-  }
-
-  return 'Unknown error';
-}
-
-function updateNeteaseApiStatus(nextStatus) {
-  neteaseApiStatus = {
-    ...neteaseApiStatus,
-    ...nextStatus,
-    updatedAt: Date.now(),
-  };
-
+function broadcastToWindows(channel, payload) {
   BrowserWindow.getAllWindows().forEach((win) => {
     if (!win.isDestroyed()) {
-      win.webContents.send(NETEASE_API_STATUS_CHANNEL, neteaseApiStatus);
+      win.webContents.send(channel, payload);
     }
   });
 }
 
-async function getFreePort() {
-  return new Promise((resolve, reject) => {
-    const srv = net.createServer();
-    srv.listen(0, () => {
-      const port = srv.address().port;
-      srv.close((err) => {
-        if (err) reject(err);
-        else resolve(port);
-      });
-    });
-    srv.on('error', reject);
-  });
-}
-
-// Initializes the Netease API runtime files before the local server starts handling requests.
-async function initializeNcmApiRuntime() {
-  global.cnIp = generateRandomChineseIP();
-
-  if (!global.deviceId) {
-    global.deviceId = generateDeviceId();
-  }
-
-  let currentPublicKey = {};
-  if (fs.existsSync(xeapiPublicKeyPath)) {
-    try {
-      currentPublicKey = JSON.parse(fs.readFileSync(xeapiPublicKeyPath, 'utf-8'));
-    } catch (error) {
-      console.warn('[Netease API] Failed to read cached xeapi public key, regenerating', error);
-    }
-  }
-
-  const { publicKey: nextPublicKey, refreshed } = await resolveXeapiPublicKey({
-    currentPublicKey,
-    deviceId: global.deviceId,
-    getXeapiPublicKey,
-  });
-  if (refreshed) {
-    fs.writeFileSync(xeapiPublicKeyPath, JSON.stringify(nextPublicKey), 'utf-8');
-  }
-  console.log(
-    `[Netease API] xeapi public key ready (source=${refreshed ? 'network' : 'cache'}, version=${nextPublicKey?.version ?? 'unknown'})`,
-  );
-
-  await refreshAnonymousToken({
-    registerAnonymous: register_anonimous,
-    cookieToJson,
-    persistToken: (token) => fs.writeFileSync(tokenPath, token, 'utf-8'),
-  });
-}
-
-async function startApi() {
-  updateNeteaseApiStatus({ status: 'starting', port: null, error: null });
-  try {
-    const freePort = await getFreePort();
-    await initializeNcmApiRuntime();
-    await serveNcmApi({ port: freePort });
-    assignedPort = freePort;
-    updateNeteaseApiStatus({ status: 'running', port: assignedPort, error: null });
-    console.log('Netease API started on port', assignedPort);
-  } catch (e) {
-    assignedPort = null;
-    updateNeteaseApiStatus({ status: 'error', port: null, error: serializeError(e) });
-    console.error('Failed to start Netease API', e);
-  }
-
-  return neteaseApiStatus;
-}
-
-let neteaseApiStartPromise = null;
-
-// Serializes start attempts. The renderer can now ask for a restart, and serveNcmApi has no
-// shutdown hook, so a second concurrent attempt would leak a listening server on another port.
-function startNeteaseApi() {
-  if (neteaseApiStatus.status === 'running') {
-    return Promise.resolve(neteaseApiStatus);
-  }
-
-  if (!neteaseApiStartPromise) {
-    neteaseApiStartPromise = startApi().finally(() => {
-      neteaseApiStartPromise = null;
-    });
-  }
-
-  return neteaseApiStartPromise;
-}
-
-const QQ_API_STATUS_CHANNEL = 'qq-api-status-changed';
-let qqApiStatus = {
-  status: 'starting',
-  port: null,
-  error: null,
-  updatedAt: Date.now(),
-};
-
-function updateQqApiStatus(nextStatus) {
-  qqApiStatus = {
-    ...qqApiStatus,
-    ...nextStatus,
-    updatedAt: Date.now(),
-  };
-
-  BrowserWindow.getAllWindows().forEach((win) => {
-    if (!win.isDestroyed()) {
-      win.webContents.send(QQ_API_STATUS_CHANNEL, qqApiStatus);
-    }
-  });
-}
-
-let qqApiHandle = null;
+// 必须在任何代码 require 网易上游之前创建：它先准备匿名 token 文件、替换上游模块，再加载上游（见 neteaseBackend.cjs）。
+// 拉起本身（网络请求）在 app ready 之后由 start() 进行。
+const neteaseBackend = createNeteaseBackend({ broadcast: broadcastToWindows, networkRecorder });
 
 // Runs @yakult-green-tea/qq-music-api in-process. Device identifiers remain in their existing file;
 // account credentials are owned by the API and cross this boundary only through an encrypted
 // main-process repository. The renderer continues to receive only an opaque session token.
-async function startQqApi() {
-  updateQqApiStatus({ status: 'starting', port: null, error: null });
-  try {
-    const freePort = await getFreePort();
-    // getFreePort only observes that the port was free a moment ago, so the bind can still lose a
-    // race. Awaiting the handle means 'running' is only published once the socket is really bound.
-    qqApiHandle = await startQqApiServer({
-      port: freePort,
-      stateFilePath: path.join(app.getPath('userData'), 'qq-auth-state', 'qq-device.json'),
-      authSessionRepository: qqAuthSessionRepository,
-    });
-    updateQqApiStatus({ status: 'running', port: freePort, error: null });
-    console.log('QQ API started on port', freePort);
-  } catch (error) {
-    qqApiHandle = null;
-
-    // A build that shipped without the package can never recover, so it is reported as
-    // 'unavailable' rather than 'error'; everything else (a lost port race, a throw from inside the
-    // package) is a real failure and keeps the error status.
-    if (isQqApiModuleNotFound(error)) {
-      updateQqApiStatus({ status: 'unavailable', port: null, error: serializeError(error) });
-      console.warn('[QQ API] Package not installed; QQ provider will stay unavailable in this build');
-      return;
-    }
-
-    updateQqApiStatus({ status: 'error', port: null, error: serializeError(error) });
-    console.error('Failed to start QQ API', error);
-  }
-}
-
-async function stopQqApi() {
-  const handle = qqApiHandle;
-  qqApiHandle = null;
-  if (!handle) {
-    return;
-  }
-
-  try {
-    await handle.close();
-  } catch (error) {
-    console.error('Failed to stop QQ API', error);
-  }
-}
+const qqBackend = createQqBackend({
+  broadcast: broadcastToWindows,
+  networkRecorder,
+  getStateFilePath: () => path.join(app.getPath('userData'), 'qq-auth-state', 'qq-device.json'),
+  authSessionRepository: qqAuthSessionRepository,
+});
 
 function isElectronDevRuntime() {
   return process.env.ELECTRON_DEV === 'true' || process.env.NODE_ENV === 'development';
@@ -4522,6 +4480,13 @@ function startMainWindowClickThroughUnlockHoverMonitor() {
   if (mainWindowClickThroughUnlockHoverTimer) {
     return;
   }
+  // Wayland exposes neither window position nor a global cursor: getBounds() sits at (0,0) and
+  // getCursorScreenPoint() stays (0,0), so this poll would read "outside" every tick and fight the
+  // renderer's mousemove hit test (the unlock button blinks every interval and can't be clicked).
+  // The renderer keeps receiving mouse-move while ignoring there, so it drives the hotspot alone.
+  if (process.platform === 'linux' && onWayland) {
+    return;
+  }
 
   syncMainWindowClickThroughUnlockHoverFromCursor();
   mainWindowClickThroughUnlockHoverTimer = setInterval(
@@ -4617,6 +4582,7 @@ function createRemoteControlWindow() {
     remoteControlWindow.setTitle(REMOTE_CONTROL_WINDOW_TITLE);
     applyRemoteControlAlwaysOnTop(remoteControlWindow);
     applyRemoteControlSkipTaskbar(remoteControlWindow);
+    applyRemoteControlWindowPresentation(remoteControlWindow);
     remoteControlWindow.show();
     remoteControlWindow.focus();
     broadcastPlaybackSyncBridgeStatus();
@@ -4663,11 +4629,13 @@ function createRemoteControlWindow() {
     win.setTitle(REMOTE_CONTROL_WINDOW_TITLE);
   });
   applyRemoteControlAlwaysOnTop(win);
+  applyRemoteControlMouseIgnore(win, remoteControlClickThroughEnabled);
   loadAppEntry(win, { remote: '1' });
 
   win.once('ready-to-show', () => {
     win.setTitle(REMOTE_CONTROL_WINDOW_TITLE);
     applyRemoteControlAlwaysOnTop(win);
+    applyRemoteControlWindowPresentation(win);
     if (latestRemoteControlSnapshot) {
       sendRemoteControlSnapshot(latestRemoteControlSnapshot);
     }
@@ -4699,162 +4667,54 @@ function sanitizeVideoExportSize(size) {
   };
 }
 
-// Resize the main window so that its *bounds* (the area the capture source
-// actually records, which includes Windows' frameless-window DWM decoration)
-// yields a content physical size >= the requested export size. We use a snap
-// search around the ideal CSS size to find a value where getContentSize() * dpr
-// exceeds the preset (overshoot), then the frontend Canvas crops the excess
-// pixels with integer symmetric cropping — no scaling, no black bars.
-// After sizing, we enter a decoration-removal loop: if DWM adds asymmetric
-// borders that shift content off-center inside bounds, we grow the window by
-// 1px on each edge and retry until bounds == content (decoration eliminated).
+// Resize the main window so its content area renders exactly the requested export size in
+// physical pixels. Recording captures the main webContents itself (see
+// setupVideoExportDisplayMediaHandler), so only the content area matters: OS window
+// decoration, DWM borders and the window manager never reach the captured frames, and content
+// that extends past the screen edge is still rendered and captured. Content usually lands a
+// pixel or two above the preset (DPR rounding); the renderer's frame pipeline crops that off.
 function fitMainWindowBoundsToExportSize(exportSize) {
   if (!mainWindow || mainWindow.isDestroyed()) {
     return null;
   }
 
   const exportDpr = mainWindow.__dpr && mainWindow.__dpr > 0 ? mainWindow.__dpr : 1;
-
-  // Size the window so its *bounds* (the area the capture source actually records —
-  // a whole-window capture includes the ~1px frameless-window DWM decoration) matches
-  // the preset in physical pixels exactly. If the bounds physical size differed from the
-  // preset, the capture source aspect ratio would mismatch the output and crop-and-scale
-  // would add black bars. We set the rounded CSS content size, then read back the bounds
-  // physical size and nudge by +/-1 CSS px until it equals the preset. The content area
-  // ends up ~decoration px smaller than the preset (a minor crop), but the recording has
-  // no scaling black bars and the output is exactly the requested resolution.
-  let cssWidth = Math.max(1, Math.round(exportSize.width / exportDpr));
-  let cssHeight = Math.max(1, Math.round(exportSize.height / exportDpr));
+  const cssWidth = Math.max(1, Math.round(exportSize.width / exportDpr));
+  const cssHeight = Math.max(1, Math.round(exportSize.height / exportDpr));
   mainWindow.setContentSize(cssWidth, cssHeight, false);
 
-  // Keep the window on whichever display it already lives on instead of forcing
-  // it to the primary display. getDisplayMatching resolves the display containing
-  // the window's current bounds, so the export stays put (no surprise jump).
+  // Keep the window on whichever display it already lives on and center it there. Windows
+  // larger than the work area are allowed to overflow it; the capture does not depend on it.
   const workArea = screen.getDisplayMatching(mainWindow.getBounds()).workArea;
-  // Center the window and snap its position to a whole physical pixel. Under a non-100% DPI
-  // the CSS position times dpr can land on a half-pixel, and Chromium's crop-and-scale
-  // capture derives its crop rect from the window's physical bounds; a half-pixel offset
-  // between the reported bounds and where the window is actually composited can leave a
-  // 1-2px black strip. Aligning the physical position to whole pixels removes that drift.
-  const center = (w, h) => {
-    let x = Math.round(workArea.x + (workArea.width - w) / 2);
-    let y = Math.round(workArea.y + (workArea.height - h) / 2);
-    if (!Number.isInteger(x * exportDpr)) x += (x % 2 === 0) ? 1 : -1;
-    if (!Number.isInteger(y * exportDpr)) y += (y % 2 === 0) ? 1 : -1;
-    mainWindow.setBounds({ x, y, width: w, height: h }, false);
-    return mainWindow.getBounds();
-  };
+  const bounds = mainWindow.getBounds();
+  // `| 0` folds Math.round's -0 (an overflowing window centered on an origin-0 display) into
+  // 0; Electron's integer conversion rejects -0.
+  mainWindow.setPosition(
+    Math.round(workArea.x + (workArea.width - bounds.width) / 2) | 0,
+    Math.round(workArea.y + (workArea.height - bounds.height) / 2) | 0,
+    false,
+  );
 
-  // The capture source is the *whole window* (bounds), which on a frameless transparent
-  // window on Windows carries a 1px DWM border (decoLeftCss = 1) and, after DWM snaps the
-  // window to its grid, can gain/lose a pixel on resize. So neither the rounded CSS size
-  // nor a single +/-1 nudge reliably yields boundsPhys == preset. We search a small CSS
-  // window around the rounded size, CENTERING THE WINDOW EACH TIME so we read the *final*
-  // boundsPhys (including DWM snapping), and pick the value whose *content* physical
-  // size (from getContentSize, NOT bounds) is >= preset + margin (so the Canvas crop
-  // can work in pure-crop mode without upscaling).
-  // Minimum overshoot (in device pixels) to guarantee pure-crop mode without upscaling.
-  // This is a hard lower bound, NOT a per-resolution guess: regardless of DPR or DWM decoration
-  // size, snap() only ensures contentPhys >= preset + CROP_MARGIN_PX, and the actual crop amount is
-  // always derived from (video.videoWidth/videoHeight - preset) at runtime. Do not retune per resolution.
-  const CROP_MARGIN_PX = 6; // Minimum extra pixels for pure crop (no scaling)
-  const snap = (base, axis, otherCss) => {
-    base = Math.max(1, base);
-    let bestCss = base;
-    let bestErr = Infinity;
-    let bestContentPhys = 0;
-    // Target contentPhys must be >= preset + margin to allow pure crop in Canvas
-    const target = (axis === 'w' ? exportSize.width : exportSize.height) + CROP_MARGIN_PX;
-    const presetVal = axis === 'w' ? exportSize.width : exportSize.height;
-    let probe = '';
-    // Fixed search radius around the rounded CSS size. This is an exploration window to absorb
-    // 1px DWM-snap jitter, NOT a hand-tuned value for a specific resolution: we always test every
-    // delta and pick the one whose measured contentPhys is closest to (preset + CROP_MARGIN_PX).
-    for (let delta = -3; delta <= 5; delta++) { // Extended search range for overshoot
-      const tryCss = base + delta;
-      if (tryCss < 1) continue;
-      if (axis === 'w') mainWindow.setContentSize(tryCss, otherCss, false);
-      else mainWindow.setContentSize(otherCss, tryCss, false);
-      const b = center(axis === 'w' ? tryCss : otherCss, axis === 'w' ? otherCss : tryCss);
-      // Compare CONTENT physical size (not bounds) because the Canvas crop operates
-      // on the content area after excluding DWM decoration pixels.
-      const [cW, cH] = mainWindow.getContentSize();
-      const cPhys = axis === 'w'
-        ? Math.round(cW * exportDpr)
-        : Math.round(cH * exportDpr);
-      const bPhys = axis === 'w'
-        ? Math.round(b.width * exportDpr)
-        : Math.round(b.height * exportDpr);
-      probe += ` [${axis} tryCss=${tryCss} boundsPhys=${bPhys} contentPhys=${cPhys}]`;
-      const err = Math.abs(cPhys - target);
-      if (cPhys >= presetVal && err <= bestErr) {
-        // Accept any value where contentPhys >= preset, prefer closest to target (=preset+margin)
-        if (err < bestErr || (err === bestErr && cPhys > bestContentPhys)) {
-          bestErr = err; bestCss = tryCss; bestContentPhys = cPhys;
-        }
-      } else if (bestContentPhys < presetVal && cPhys > bestContentPhys) {
-        // Fallback: if no valid overshoot found yet, keep the largest undershoot
-        bestErr = err; bestCss = tryCss; bestContentPhys = cPhys;
-      }
-    }
-    return bestCss;
-  };
-
-  cssWidth = snap(cssWidth, 'w', cssHeight);
-  let bounds = center(cssWidth, cssHeight);
-
-  // A frameless transparent window on Windows keeps a 1px DWM border (decoLeftCss = 1,
-  // sometimes also bottom). That border makes the captured whole-window source wider/taller
-  // than the content, so its aspect ratio can never exactly equal the preset and crop-and-scale
-  // pads black bars. Force the content rect to fill the whole window so bounds == content;
-  // retry a few times because a single setContentBounds can race with DWM. Once the decoration
-  // is gone, boundsPhys equals contentPhys and the source aspect ratio matches the preset.
-  for (let i = 0; i < 4; i++) {
-    mainWindow.setContentBounds({ x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height });
-    const cb = mainWindow.getContentBounds();
-    const b2 = mainWindow.getBounds();
-    const dl = cb.x - b2.x, dt = cb.y - b2.y;
-    const dr = (b2.x + b2.width) - (cb.x + cb.width);
-    const db = (b2.y + b2.height) - (cb.y + cb.height);
-    if (dl === 0 && dt === 0 && dr === 0 && db === 0) break;
-    bounds = b2;
-  }
-  bounds = mainWindow.getBounds();
-
-  // With the decoration removed, bounds == content, so snapping the height now targets the
-  // real content height: a CSS height of round(600/1.5)=400 yields boundsPhys==600 exactly.
-  cssHeight = snap(cssHeight, 'h', cssWidth);
-  bounds = center(cssWidth, cssHeight);
-
-  let boundsPhysW = Math.round(bounds.width * exportDpr);
-  let boundsPhysH = Math.round(bounds.height * exportDpr);
-
-  return {
-    exportDpr, cssWidth, cssHeight, bounds, boundsPhysW, boundsPhysH,
-  };
+  return { exportDpr, cssWidth, cssHeight };
 }
 
-async function getMainWindowCaptureSource() {
-  if (!mainWindow || mainWindow.isDestroyed()) {
-    return null;
-  }
+// Video export records the main window's own webContents (Chromium tab capture) instead of
+// picking an OS window out of desktopCapturer. Matching that window by id or title is
+// unreliable — under Wayland the portal returns nameless sources whose ids never match
+// getMediaSourceId() (#632) — and a window capture also drags in DWM decoration. Tab capture
+// needs no OS capture permission, keeps rendering when the window is covered, and its frames
+// are exactly the content area. Requests are granted only to the main window while an export
+// has prepared the window, so nothing else can silently capture the player.
+function setupVideoExportDisplayMediaHandler() {
+  session.defaultSession.setDisplayMediaRequestHandler((request, callback) => {
+    const requester = request.frame ? electronWebContents.fromFrame(request.frame) : null;
+    if (!videoExportWindowRestoreState || !isTrustedMainWindowContents(requester)) {
+      callback({});
+      return;
+    }
 
-  const mediaSourceId = typeof mainWindow.getMediaSourceId === 'function'
-    ? mainWindow.getMediaSourceId()
-    : null;
-  const title = mainWindow.getTitle();
-  const sources = await desktopCapturer.getSources({
-    types: ['window'],
-    thumbnailSize: { width: 0, height: 0 },
+    callback({ video: mainWindow.webContents.mainFrame });
   });
-
-  const source =
-    (mediaSourceId && sources.find(item => item.id === mediaSourceId)) ||
-    sources.find(item => item.name === title && item.name !== REMOTE_CONTROL_WINDOW_TITLE) ||
-    sources.find(item => item.name.toLowerCase().includes('folia') && item.name !== REMOTE_CONTROL_WINDOW_TITLE) ||
-    null;
-
-  return source ? { id: source.id, name: source.name } : null;
 }
 
 function createWindow(options = {}) {
@@ -4935,6 +4795,19 @@ function createWindow(options = {}) {
   }
   win.__wallpaperWindowTransparent = useTransparentWindow;
   win.__wallpaperGeometry = useWallpaperGeometry;
+  win.__transparentFullscreen = false;
+
+  if (process.platform === 'win32' && useTransparentWindow) {
+    win.webContents.on('before-input-event', (event, input) => {
+      if (input.type !== 'keyDown' || input.key !== 'F11' || input.isAutoRepeat) {
+        return;
+      }
+      event.preventDefault();
+      if (!isWallpaperModeEnabled()) {
+        setMainWindowFullscreen(win, !isMainWindowFullscreen(win));
+      }
+    });
+  }
 
   if (useDesktopWindowType) {
     x11WallpaperWindows.add(win);
@@ -4943,6 +4816,11 @@ function createWindow(options = {}) {
   // Watchdog trigger point 1: a crashed renderer breaks the wallpaper connection.
   win.webContents.on('render-process-gone', (_event, details) => {
     wallpaperWatchdog.handleRendererGone(details);
+    if (win === mainWindow && shouldReloadMainRenderer(win, details)) {
+      win.__rendererCrashReloads.push(Date.now());
+      win.webContents.reload();
+      return;
+    }
     // Windows: a renderer crash kills only the page — the BrowserWindow (and its place in the
     // WorkerW) survives, so the helper keeps the still-valid hwnd and must NOT be touched.
     // Reloading the webContents restores the UI in place; the full window rebuild
@@ -4999,9 +4877,19 @@ function createWindow(options = {}) {
   // macOS completes fullscreen asynchronously; notify after the native transition, including
   // transitions initiated by the system menu or keyboard instead of the titlebar button.
   win.on('enter-full-screen', () => {
+    if (process.platform === 'win32' && useTransparentWindow) {
+      if (!win.__transparentFullscreen) {
+        saveWindowState(win);
+        win.__transparentFullscreenRestoreBounds = win.getBounds();
+      }
+      win.__transparentFullscreen = true;
+    }
     win.webContents.send('window-fullscreen-changed', true);
   });
   win.on('leave-full-screen', () => {
+    if (process.platform === 'win32' && useTransparentWindow) {
+      win.__transparentFullscreen = false;
+    }
     win.webContents.send('window-fullscreen-changed', false);
   });
   win.on('maximize', () => {
@@ -5181,7 +5069,15 @@ app.whenReady().then(async () => {
     }
   }
 
+  // Seal AI API keys that older versions left in config.json as plaintext.
+  try {
+    aiCredentials.migrate();
+  } catch (error) {
+    console.warn('[AiCredentials] Migrating plaintext API keys failed', error);
+  }
+
   setupFileSystemAccessPermissionHandlers();
+  setupVideoExportDisplayMediaHandler();
   setupCorsBypassHandlers();
   localCoverAssetStore.registerProtocolHandler(protocol, electronNet);
   // Transcode fallback is an optional degradation path; a failure preparing it must never keep
@@ -5217,9 +5113,9 @@ app.whenReady().then(async () => {
   setupAutoUpdater();
   // Not awaited: this performs network round trips (xeapi key, anonymous token) that used to keep
   // the window from appearing at all on a slow or blocked route. Status reaches the renderer over
-  // NETEASE_API_STATUS_CHANNEL, and get-netease-port reports null until the server is listening.
-  void startNeteaseApi();
-  await startQqApi();
+  // netease-api-status-changed, and get-netease-port reports null until the server is listening.
+  void neteaseBackend.start();
+  await qqBackend.start();
   try {
     await stageApi.startStageServerIfNeeded();
   } catch (error) {
@@ -5405,6 +5301,7 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   transcodeService.dispose();
+  videoExportFileWriter.disposeSync();
   isAppQuitting = true;
   clearPendingWindowPlaybackHandoffRequests();
   if (modSystem) {
@@ -5452,7 +5349,7 @@ app.on('before-quit', () => {
     }
   }
   void discordPresence.destroy();
-  void stopQqApi();
+  void qqBackend.stop();
   void lyricApi.stop();
 });
 
@@ -5465,6 +5362,9 @@ ipcMain.handle('window-set-native-theme', (event, themeSource) => {
 // expressed in physical pixels (see resize-main-window / video-export-prepare-window).
 ipcMain.handle('report-device-pixel-ratio', (event, ratio) => {
   if (!isTrustedMainWindowContents(event.sender)) return;
+  // Tab capture may raise the captured page's device scale factor while recording; that is a
+  // capture artifact, not the monitor's DPR, so it must not leak into window sizing.
+  if (videoExportWindowRestoreState) return;
   const dpr = Number(ratio);
   if (Number.isFinite(dpr) && dpr > 0) {
     mainWindow.__dpr = dpr;
@@ -5491,7 +5391,19 @@ ipcMain.handle('set-app-locale', (event, localeKey) => {
 });
 
 ipcMain.handle('save-settings', (event, key, value) => {
-  if (key === 'DISCORD_RICH_PRESENCE_APPLICATION_ID') {
+  // electron-store's set() also accepts an object of key/value pairs, which would bypass the
+  // per-key guards below.
+  if (typeof key !== 'string') {
+    return getPublicSettings();
+  }
+  if (key === 'DISCORD_RICH_PRESENCE_APPLICATION_ID' || isReservedAiCredentialKey(key)) {
+    return getPublicSettings();
+  }
+  if (isAiCredentialKey(key)) {
+    // Only a string is a key; '' is the explicit clear. Anything else must not wipe a saved key.
+    if (typeof value === 'string') {
+      aiCredentials.set(key, value);
+    }
     return getPublicSettings();
   }
 
@@ -5505,9 +5417,12 @@ ipcMain.handle('save-settings', (event, key, value) => {
   }
   if (
     key === MINIMIZE_TO_TRAY_SETTING_KEY ||
+    key === CLOSE_TO_TRAY_SETTING_KEY ||
     key === HIDE_TASKBAR_ICON_SETTING_KEY ||
     key === REMOTE_CONTROL_ALWAYS_ON_TOP_SETTING_KEY ||
     key === REMOTE_CONTROL_SKIP_TASKBAR_SETTING_KEY ||
+    key === REMOTE_CONTROL_HIDE_TITLEBAR_SETTING_KEY ||
+    key === REMOTE_CONTROL_CLICK_THROUGH_SETTING_KEY ||
     key === TRANSPARENT_PLAYER_BACKGROUND_SETTING_KEY ||
     key === DISCORD_RICH_PRESENCE_ENABLED_SETTING_KEY ||
     key === VOICE_INPUT_PAUSE_ENABLED_SETTING_KEY ||
@@ -5675,6 +5590,17 @@ ipcMain.handle('save-settings', (event, key, value) => {
   if (key === REMOTE_CONTROL_SKIP_TASKBAR_SETTING_KEY) {
     remoteControlSkipTaskbarEnabled = Boolean(nextValue);
     applyRemoteControlSkipTaskbar(remoteControlWindow);
+  }
+
+  if (key === REMOTE_CONTROL_HIDE_TITLEBAR_SETTING_KEY) {
+    remoteControlHideTitlebarEnabled = Boolean(nextValue);
+    applyRemoteControlWindowPresentation(remoteControlWindow);
+  }
+
+  if (key === REMOTE_CONTROL_CLICK_THROUGH_SETTING_KEY) {
+    remoteControlClickThroughEnabled = Boolean(nextValue);
+    applyRemoteControlWindowPresentation(remoteControlWindow);
+    refreshTrayMenu();
   }
 
   if (key === STAGE_MODE_SOURCE_SETTING_KEY) {
@@ -5918,24 +5844,47 @@ ipcMain.handle('clear-local-cover-assets', async () => {
   return localCoverAssetStore.clear();
 });
 
-// Retrieve dynamic port of local Netease API Server
-ipcMain.handle('get-netease-port', () => {
-  return assignedPort;
+// 内嵌后端的端口、状态、重启、诊断快照与主动自检（electron/loginBackendIpc.cjs）。
+registerLoginBackendIpc({
+  ipcMain,
+  app,
+  safeStorage,
+  getDefaultSession: () => session.defaultSession,
+  neteaseBackend,
+  qqBackend,
 });
 
-ipcMain.handle('restart-netease-api', () => startNeteaseApi());
+// Both channels reach the embedded KuGou API. `kugou-api-request` forwards the renderer's operation
+// and params verbatim, so it is a write-capable surface rather than a read-only one; the bridge keeps
+// its own operation allowlist, so what this guard adds is the caller surface. Trusted here means the
+// two first-party windows - the main window and the remote-control window, which runs the same app
+// and therefore the same online providers. `bodian-api-request` below gates the same way.
+//
+// Boundary, stated plainly: comparing webContents identity rejects other windows (a popup opened with
+// window.open carries the same preload). It cannot stop script already running inside a trusted
+// window - that is the CSP and preload layer's job, not this check's.
+const isFirstPartyWindowContents = (event) => (
+  isTrustedMainWindowContents(event.sender) || isTrustedRemoteControlContents(event.sender)
+);
 
-ipcMain.handle('get-netease-api-status', () => {
-  return neteaseApiStatus;
+ipcMain.handle('kugou-api-status', createSenderGuardedHandler({
+  channel: 'kugou-api-status',
+  // 只回传可用性、登录状态与错误：拒绝时给一个「没有这个能力」的取值，让调用方走 unavailable 分支。
+  isTrusted: isFirstPartyWindowContents,
+  onUntrusted: () => null,
+  handler: () => kugouApiBridge.getStatus(),
+}));
+ipcMain.handle('kugou-api-request', createSenderGuardedHandler({
+  channel: 'kugou-api-request',
+  isTrusted: isFirstPartyWindowContents,
+  handler: (_event, operation, params) => kugouApiBridge.request(operation, params),
+}));
+ipcMain.handle('bodian-api-request', (event, operation, params) => {
+  if (!isTrustedMainWindowContents(event.sender)) {
+    return { ok: false, error: { code: 'unavailable', message: 'Untrusted Bodian request' } };
+  }
+  return bodianApiBridge.request(operation, params);
 });
-
-// Retrieve dynamic port of the embedded QQ API server; null until it is running.
-ipcMain.handle('get-qq-port', () => qqApiStatus.port);
-
-ipcMain.handle('get-qq-api-status', () => qqApiStatus);
-
-ipcMain.handle('kugou-api-status', () => kugouApiBridge.getStatus());
-ipcMain.handle('kugou-api-request', (_event, operation, params) => kugouApiBridge.request(operation, params));
 
 ipcMain.handle('window-minimize', () => {
   if (!mainWindow || mainWindow.isDestroyed()) {
@@ -5981,11 +5930,11 @@ ipcMain.handle('window-toggle-fullscreen', (event) => {
 
   // Fullscreen would tear the wallpaper window out of its desktop-layer geometry.
   if (isWallpaperModeEnabled()) {
-    return mainWindow.isFullScreen();
+    return isMainWindowFullscreen(mainWindow);
   }
 
-  const nextFullscreen = !mainWindow.isFullScreen();
-  mainWindow.setFullScreen(nextFullscreen);
+  const nextFullscreen = !isMainWindowFullscreen(mainWindow);
+  setMainWindowFullscreen(mainWindow, nextFullscreen);
   return nextFullscreen;
 });
 
@@ -5997,6 +5946,12 @@ ipcMain.handle('window-close', () => {
   // Closing a wallpaper window is meaningless; exit goes through the wallpaper mode setting.
   if (isWallpaperModeEnabled()) {
     return false;
+  }
+
+  // Only the titlebar X hides to the tray. Alt+F4, the taskbar's Close window, logoff and
+  // app.quit() still emit a real 'close', so there is always a way to actually exit.
+  if (readStoredBoolean(CLOSE_TO_TRAY_SETTING_KEY, false) && appTray) {
+    return hideMainWindow();
   }
 
   mainWindow.close();
@@ -6025,7 +5980,7 @@ ipcMain.handle('window-is-fullscreen', (event) => {
   if (!isTrustedMainWindowContents(event.sender) || !mainWindow || mainWindow.isDestroyed()) {
     return false;
   }
-  return mainWindow.isFullScreen();
+  return isMainWindowFullscreen(mainWindow);
 });
 
 ipcMain.handle('window-get-transparent-mode', (event) => {
@@ -6108,9 +6063,17 @@ ipcMain.handle('window-set-always-on-top', (event, enabled) => {
   return setMainWindowAlwaysOnTop(enabled);
 });
 
-ipcMain.handle('obs-browser-source-get-status', () => {
-  return buildObsBrowserSourceStatus();
-});
+ipcMain.handle('obs-browser-source-get-status', createSenderGuardedHandler({
+  channel: 'obs-browser-source-get-status',
+  // 主窗才有浏览器源这张设置页；远控窗用不到它，所以这里只认主窗。
+  isTrusted: (event) => isTrustedMainWindowContents(event.sender),
+  handler: () => buildObsBrowserSourceStatus(),
+}));
+// On the payload: it carries the browser-source token and the full push URL. That token only feeds
+// the local browser-source overlay - display content, no account permissions, no secrets - so this
+// is not a credential-leak fix and it is not a merge blocker on its own. The three handlers beside it
+// (set-enabled / regenerate-token / publish-config) all gate on the sender; this one was the odd one
+// out, and gating it keeps the response surface uniform.
 
 ipcMain.handle('obs-browser-source-set-enabled', async (event, enabled) => {
   if (!isTrustedMainWindowContents(event.sender)) {
@@ -6343,6 +6306,14 @@ ipcMain.handle('remote-control-set-always-on-top', (event, nextAlwaysOnTop) => {
   return remoteControlAlwaysOnTop;
 });
 
+ipcMain.handle('remote-control-get-window-settings', (event) => {
+  if (!isTrustedRemoteControlContents(event.sender) && !isTrustedMainWindowContents(event.sender)) {
+    throw new Error('Untrusted renderer attempted to read remote control window settings.');
+  }
+
+  return buildRemoteControlWindowSettings();
+});
+
 ipcMain.handle('remote-control-publish-snapshot', (event, snapshot) => {
   if (!isTrustedMainWindowContents(event.sender)) {
     throw new Error('Untrusted renderer attempted to publish remote control state.');
@@ -6400,8 +6371,8 @@ ipcMain.handle('remote-control-send-command', (event, command) => {
       return false;
     }
 
-    if (mainWindow.isFullScreen()) {
-      mainWindow.setFullScreen(false);
+    if (isMainWindowFullscreen(mainWindow)) {
+      setMainWindowFullscreen(mainWindow, false);
     }
 
     if (mainWindow.isMaximized()) {
@@ -6455,14 +6426,6 @@ ipcMain.handle('video-export-choose-path', async (event, defaultName, extension,
   };
 });
 
-ipcMain.handle('video-export-get-main-window-source', async (event) => {
-  if (!isTrustedMainWindowContents(event.sender)) {
-    throw new Error('Untrusted renderer attempted to read the main window capture source.');
-  }
-
-  return getMainWindowCaptureSource();
-});
-
 ipcMain.handle('video-export-prepare-window', (event, size) => {
   if (!isTrustedMainWindowContents(event.sender)) {
     throw new Error('Untrusted renderer attempted to resize the main window for export.');
@@ -6473,16 +6436,25 @@ ipcMain.handle('video-export-prepare-window', (event, size) => {
     return false;
   }
 
+  // The renderer sends its DPR at the moment of export; the mount-time report can be missing
+  // or stale, and sizing with the wrong DPR renders the content at the wrong physical size.
+  const reportedDpr = Number(size?.dpr);
+  if (Number.isFinite(reportedDpr) && reportedDpr > 0) {
+    mainWindow.__dpr = reportedDpr;
+  }
+
   if (!videoExportWindowRestoreState) {
     videoExportWindowRestoreState = {
-      bounds: mainWindow.getBounds(),
+      bounds: mainWindow.__transparentFullscreen === true
+        ? (mainWindow.__transparentFullscreenRestoreBounds || mainWindow.getBounds())
+        : mainWindow.getBounds(),
       isMaximized: mainWindow.isMaximized(),
-      isFullScreen: mainWindow.isFullScreen(),
+      isFullScreen: isMainWindowFullscreen(mainWindow),
     };
   }
 
-  if (mainWindow.isFullScreen()) {
-    mainWindow.setFullScreen(false);
+  if (isMainWindowFullscreen(mainWindow)) {
+    setMainWindowFullscreen(mainWindow, false);
   }
 
   if (mainWindow.isMaximized()) {
@@ -6516,7 +6488,7 @@ ipcMain.handle('video-export-restore-window', (event) => {
   mainWindow.setBounds(restoreState.bounds, true);
 
   if (restoreState.isFullScreen) {
-    mainWindow.setFullScreen(true);
+    setMainWindowFullscreen(mainWindow, true);
   } else if (restoreState.isMaximized) {
     mainWindow.maximize();
   }
@@ -6524,17 +6496,32 @@ ipcMain.handle('video-export-restore-window', (event) => {
   return true;
 });
 
-ipcMain.handle('video-export-write-file', async (event, filePath, data) => {
+// The export file is written chunk by chunk while recording (see videoExportFileWriter.cjs);
+// a whole-file write would need the entire video in memory and in a single IPC message.
+const assertTrustedVideoExportWriter = (event) => {
   if (!isTrustedMainWindowContents(event.sender)) {
     throw new Error('Untrusted renderer attempted to write a video export file.');
   }
+};
 
-  if (typeof filePath !== 'string' || !filePath) {
-    throw new Error('Missing video export path.');
-  }
+ipcMain.handle('video-export-open-file', (event, filePath) => {
+  assertTrustedVideoExportWriter(event);
+  return videoExportFileWriter.open(filePath);
+});
 
-  await fsp.writeFile(filePath, Buffer.from(data));
-  return true;
+ipcMain.handle('video-export-append-chunk', (event, sessionId, data) => {
+  assertTrustedVideoExportWriter(event);
+  return videoExportFileWriter.append(sessionId, data);
+});
+
+ipcMain.handle('video-export-finish-file', (event, sessionId) => {
+  assertTrustedVideoExportWriter(event);
+  return videoExportFileWriter.finish(sessionId);
+});
+
+ipcMain.handle('video-export-abort-file', (event, sessionId) => {
+  assertTrustedVideoExportWriter(event);
+  return videoExportFileWriter.abort(sessionId);
 });
 
 ipcMain.handle('debug-get-rendered-fonts', async (event, selector) => {
@@ -6573,7 +6560,7 @@ ipcMain.handle('generate-theme', async (event, lyricsText, options = {}) => {
       const sourcePrompt = buildThemeSourcePrompt(snippet, isPureMusic, songTitle);
       const apiUrl = normalizeOpenAIChatCompletionsUrl(store.get('OPENAI_API_URL'));
       const content = await runAiJsonCompletion({
-        store,
+        store: aiCredentials.settingsView,
         systemPrompt,
         sourcePrompt,
         schema: THEME_JSON_SCHEMA,
@@ -6594,7 +6581,7 @@ ipcMain.handle('generate-theme', async (event, lyricsText, options = {}) => {
       dualTheme.dark.provider = 'OpenAI Compatible (Local)';
 
     } else {
-      const apiKey = store.get('GEMINI_API_KEY');
+      const apiKey = aiCredentials.get('GEMINI_API_KEY');
       if (!apiKey) {
         throw new Error("GEMINI_API_KEY is not configured in settings");
       }
@@ -6622,6 +6609,35 @@ ipcMain.handle('generate-theme', async (event, lyricsText, options = {}) => {
   }
 });
 
+// "Test connection" button in AI settings: sends "hello" using the values currently in the form
+// (not the saved ones, nothing is persisted) over the same fetch/proxy path as real AI requests.
+// Never throws: a failed connection is returned as a displayable result, and the key is not echoed.
+ipcMain.handle('ai-test-connection', async (event, payload) => {
+  if (!isTrustedMainWindowContents(event.sender)) {
+    return { ok: false, durationMs: 0, errorKind: 'invalid', error: 'Untrusted caller.' };
+  }
+  try {
+    const useSystemProxy = payload && typeof payload === 'object' && typeof payload.useSystemProxy === 'boolean'
+      ? payload.useSystemProxy
+      : (store.get('USE_SYSTEM_PROXY_FOR_AI') || false);
+    const customFetch = (url, options) => fetchWithOptionalSystemProxy(url, options, useSystemProxy);
+    // An empty key field means "use the saved key": the renderer never receives it to send back.
+    let testPayload = payload;
+    if (payload && typeof payload === 'object'
+      && (payload.apiKey === undefined || payload.apiKey === null || typeof payload.apiKey === 'string')) {
+      const resolved = aiCredentials.resolveTestApiKey(payload.provider, payload.apiKey, payload.apiUrl);
+      if (resolved.error) {
+        return { ok: false, durationMs: 0, errorKind: 'config', error: resolved.error };
+      }
+      testPayload = { ...payload, apiKey: resolved.apiKey };
+    }
+    return await runAiConnectionTest(testPayload, { customFetch });
+  } catch (e) {
+    console.error('[ai-test] failed:', e instanceof Error ? e.message : String(e));
+    return { ok: false, durationMs: 0, errorKind: 'network', error: 'Connection test failed unexpectedly.' };
+  }
+});
+
 // Word-segments the current song's lyric lines with whichever model the user configured. Shares
 // its prompt with the web handlers and with the client's copy-to-a-model-site path through
 // shared/lyricSegmentationPrompt.cjs, so all four routes ask for exactly the same thing.
@@ -6641,7 +6657,7 @@ ipcMain.handle('segment-lyrics', async (event, lines) => {
       + ` via ${store.get('AI_PROVIDER') || 'gemini'}${useSystemProxy ? ' (system proxy)' : ''}`);
 
     rawResponse = await runAiJsonCompletion({
-      store,
+      store: aiCredentials.settingsView,
       systemPrompt: buildSegmentationSystemPrompt(),
       sourcePrompt: buildSegmentationSourcePrompt(sourceLines),
       schema: SEGMENTATION_JSON_SCHEMA,

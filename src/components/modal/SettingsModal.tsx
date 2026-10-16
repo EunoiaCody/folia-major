@@ -5,7 +5,8 @@ import { X, Keyboard, Loader2, Check, AlertCircle, ChevronLeft, Download, Extern
 import { useTranslation } from 'react-i18next';
 import { getCacheUsageByCategory, clearCacheByCategory, clearAllData } from '../../services/db';
 import { DualTheme, StageStatus, StageSource, Theme, ThemeMode, type CadenzaTuning, type CappellaEmojiImage, type CappellaTuning, type FumeTuning, type NowPlayingConnectionStatus, type PartitaTuning, type ReplayGainMode, type TiltTuning, type StoredCustomLyricsFont, type VisualizerMode } from '../../types';
-import { getNavidromeConfig, saveNavidromeConfig, clearNavidromeConfig, hashPassword, navidromeApi, isNavidromeEnabled, setNavidromeEnabled, getCachedNavidromeServerProfile, refreshNavidromeServerProfile } from '../../services/navidromeService';
+import { getNavidromeConfig, saveNavidromeConfig, clearNavidromeConfig, hashPassword, navidromeApi, isNavidromeEnabled, setNavidromeEnabled, getCachedNavidromeServerProfile, refreshNavidromeServerProfile, getNavidromeConfigOrigin, dismissNavidromeServerPreset } from '../../services/navidromeService';
+import { fetchNavidromeServerPreset, markNavidromeConfigAsPresetIfMatching, restoreNavidromeServerPreset } from '../../services/navidromeServerPreset';
 import { NavidromeConfig, NavidromeServerProfile } from '../../types/navidrome';
 import VisPlayground from '../visualizer/VisPlayground';
 import { VISUALIZER_REGISTRY, getVisualizerModeLabel } from '../visualizer/registry';
@@ -20,6 +21,8 @@ import GeneralSettingsSubview from './settings/GeneralSettingsSubview';
 import IntegrationSettingsSubview from './settings/IntegrationSettingsSubview';
 import type { PlayerCapConnectionStatus } from '../../types/playerCap';
 import LabSettingsModal from './settings/LabSettingsModal';
+import GraphicsSettingsSubview from './settings/GraphicsSettingsSubview';
+import ModsSettingsSubview from './settings/ModsSettingsSubview';
 import DeveloperSettingsSubview from './settings/DeveloperSettingsSubview';
 import PlaybackSettingsSubview from './settings/PlaybackSettingsSubview';
 import InteractionSettingsSubview from './settings/InteractionSettingsSubview';
@@ -28,7 +31,9 @@ import { AiHelpPromptModal } from './AiHelpPromptModal';
 import SettingsHelpActions from './SettingsHelpActions';
 import { openPonderNavigation } from '../../services/ponder/pagePonderTarget';
 import ReleaseNotesDialog from './ReleaseNotesDialog';
-import { discordIconUrl, openDiscordInvite } from '../shared/discordCommunity';
+import { JoinCommunityButton } from '../shared/JoinCommunityButton';
+import { copyTextToClipboard } from '../../utils/clipboard';
+import { BUILD_KIND_TAGS, getBuildKind } from '../../utils/buildProvenance';
 import meowImageUrl from '../../../build/miao.png';
 import type { LyricData } from '../../types';
 import { type SettingsModalState, type SettingsSubviewId, type VisualizerSettingsSection } from '../../stores/useSettingsModalStore';
@@ -38,6 +43,7 @@ import SettingsSidebarWide from './settings/navigation/SettingsSidebarWide';
 import { settingsAnchorSubview } from './settings/navigation/settingsAnchorModel';
 import SettingsSectionHeader from './settings/SettingsSectionHeader';
 import { buildSettingsNavGroups, findSettingsNavItem, type SettingsSectionId } from './settings/navigation/settingsNavModel';
+import { isSettingsSectionSubview, resolveInitialSettingsSection, sectionForSettingsSubview, writeLastSettingsSection } from './settings/navigation/settingsLastSection';
 import { useMediaQuery } from '../../hooks/useMediaQuery';
 import { useSettingsScrollSpy } from '../../hooks/useSettingsScrollSpy';
 import { useReducedMotionFor } from '../../hooks/useReducedMotionFor';
@@ -64,12 +70,17 @@ import { useSettingsModalStore } from '../../stores/useSettingsModalStore';
 import { selectAudioSettingsSnapshot, useAudioSettingsStore } from '../../stores/useAudioSettingsStore';
 import { selectHomeLayoutSettingsSnapshot, useHomeLayoutSettingsStore } from '../../stores/useHomeLayoutSettingsStore';
 import { setNavidromeEnabledState, useLibraryStore } from '../../stores/useLibraryStore';
+import { hasLibrarySuiteChoice } from '../../library/registry';
+import { useIsBravaisLibraryActive } from '../../library/app/bravaisLibraryActive';
 
 const DEFAULT_OPENAI_TEMPERATURE = '0.7';
 const AUR_PACKAGE_URL = 'https://aur.archlinux.org/packages/folia-major-bin';
-const VERSION_INFO = __DOCKER_STACK_VERSION__
+const BUILD_KIND = getBuildKind();
+const VERSION_INFO = (__DOCKER_STACK_VERSION__
     ? `${__APP_VERSION_LABEL__} v${__APP_VERSION__} · Stack ${__DOCKER_STACK_VERSION__} · ${__COMMIT_HASH__}`
-    : `${__APP_VERSION_LABEL__} v${__APP_VERSION__} - ${__GIT_BRANCH__} - ${__COMMIT_HASH__}`;
+    : `${__APP_VERSION_LABEL__} v${__APP_VERSION__} - ${__GIT_BRANCH__} - ${__COMMIT_HASH__}`)
+    // 自部署与非官方构建强制带上标记（固定英文，复制进 issue 后 triage 能认出来）
+    + (BUILD_KIND === 'official' ? '' : ` · ${BUILD_KIND_TAGS[BUILD_KIND]}`);
 
 interface SettingsModalProps {
     onClose: () => void;
@@ -132,6 +143,9 @@ const DEFAULT_UPDATE_CHANNEL: 'realeco' | 'limo' | 'cielo' | 'internal' = __APP_
         : __APP_RELEASE_CHANNEL__ === 'internal'
             ? 'internal'
             : 'realeco';
+
+// Synchronous on purpose: the first render has to know which sections exist before the isElectron state below settles.
+const hasElectronBridge = () => typeof window !== 'undefined' && Boolean((window as any).electron);
 
 const SettingsModal: React.FC<SettingsModalProps> = ({
     onClose,
@@ -198,18 +212,24 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
     } = useAudioSettingsStore(useShallow(selectAudioSettingsSnapshot));
     const {
         minimizeToTray,
+        closeToTray,
         voiceInputPauseEnabled,
         hideTaskbarIcon,
         hideRemoteControlTaskbarIcon,
+        hideRemoteControlTitlebar,
+        remoteControlClickThrough,
         wallpaperMode,
         handleToggleWallpaperMode: onToggleWallpaperMode,
         wallpaperMacAutohideDock,
         handleToggleWallpaperMacAutohideDock: onToggleWallpaperMacAutohideDock,
         openPlayerOnLaunch,
         handleToggleMinimizeToTray: onToggleMinimizeToTray,
+        handleToggleCloseToTray: onToggleCloseToTray,
         handleToggleVoiceInputPause: onToggleVoiceInputPause,
         handleToggleHideTaskbarIcon: onToggleHideTaskbarIcon,
         handleToggleHideRemoteControlTaskbarIcon: onToggleHideRemoteControlTaskbarIcon,
+        handleToggleHideRemoteControlTitlebar: onToggleHideRemoteControlTitlebar,
+        handleToggleRemoteControlClickThrough: onToggleRemoteControlClickThrough,
         handleToggleOpenPlayerOnLaunch: onToggleOpenPlayerOnLaunch,
     } = useDesktopSettingsStore(useShallow(selectDesktopSettingsSnapshot));
     const {
@@ -335,6 +355,8 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
         handleResetSonnetTuning: onResetSonnetTuning,
         handleSetTemperaTuning: onTemperaTuningChange,
         handleResetTemperaTuning: onResetTemperaTuning,
+        handleSetLumiereTuning: onLumiereTuningChange,
+        handleResetLumiereTuning: onResetLumiereTuning,
         handleUploadMonetBackgroundImage: onUploadMonetBackgroundImage,
         handleClearMonetBackgroundImage: onClearMonetBackgroundImage,
         handleUploadMonetPortraitImage: onUploadMonetPortraitImage,
@@ -371,6 +393,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
         pendoloTuning,
         sonnetTuning,
         temperaTuning,
+        lumiereTuning,
         urlBackgroundList,
         urlBackgroundSelectedId,
     } = useVisualizerSettingsStore(useShallow(selectVisualizerSettingsSnapshot));
@@ -392,7 +415,16 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
         setTabDirection(tab === 'options' ? 'left' : 'right');
         setActiveTab(tab);
     };
-    const [activeSettingsSection, setActiveSettingsSection] = useState<SettingsSectionId>('appearance');
+    // A bare open (no subview, no anchor) restores the last section the user entered; any named target wins.
+    const [activeSettingsSection, setActiveSettingsSection] = useState<SettingsSectionId>(() => resolveInitialSettingsSection({
+        initialSubview,
+        hasInitialAnchor: initialAnchor !== null,
+        isElectron: hasElectronBridge(),
+    }));
+    const handleSelectSettingsSection = (section: SettingsSectionId) => {
+        setActiveSettingsSection(section);
+        writeLastSettingsSection(section, { isElectron: hasElectronBridge() });
+    };
     const contentScrollRef = useRef<HTMLDivElement>(null);
     // Matches the md:flex-row split below; the two sidebars are different enough to render separately.
     const isWideSettingsLayout = useMediaQuery('(min-width: 768px)');
@@ -418,21 +450,14 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
         setShowLyricFilterSettings(initialSubview === 'lyricFilter');
         setShowGlobalLyricOffset(initialSubview === 'globalLyricOffset');
 
-        if (
-            initialSubview === 'appearance' ||
-            initialSubview === 'general' ||
-            initialSubview === 'playback' ||
-            initialSubview === 'interaction' ||
-            initialSubview === 'integration' ||
-            initialSubview === 'storage' ||
-            initialSubview === 'desktop' ||
-            initialSubview === 'lab' ||
-            initialSubview === 'globalLyricOffset' ||
-            initialSubview === 'lyricFilter'
-        ) {
+        const targetSection = sectionForSettingsSubview(initialSubview);
+        if (targetSection) {
             // 这两个是播放页歌词区里的二级面板，关掉后应该落回它们的入口所在分区。
-            const isPlaybackSubview = initialSubview === 'globalLyricOffset' || initialSubview === 'lyricFilter';
-            setActiveSettingsSection(isPlaybackSubview ? 'playback' : initialSubview);
+            setActiveSettingsSection(targetSection);
+            // 只有真正进入某个分区页才记忆；二级面板和调参台不算「进入」分区。
+            if (isSettingsSectionSubview(initialSubview)) {
+                writeLastSettingsSection(targetSection, { isElectron: hasElectronBridge() });
+            }
         } else {
             setActiveSettingsSection(prev => prev || 'appearance');
         }
@@ -451,13 +476,15 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
     const [isCleaning, setIsCleaning] = useState<string | null>(null);
 
     // Electron Settings State
-    const [isElectron, setIsElectron] = useState(false);
+    // Seeded synchronously so a remembered desktop/mods section has its title on the first frame; the effect below still confirms it.
+    const [isElectron, setIsElectron] = useState(hasElectronBridge);
     const [electronSettings, setElectronSettings] = useState({
         GEMINI_API_KEY: '',
         OPENAI_API_KEY: '',
         OPENAI_API_URL: '',
         OPENAI_API_MODEL: '',
         OPENAI_API_TEMPERATURE: DEFAULT_OPENAI_TEMPERATURE,
+        OPENAI_API_STREAM: false,
         AI_PROVIDER: 'gemini',
         USE_SYSTEM_PROXY_FOR_AI: false,
         ENABLE_UPDATE_CHECK: true,
@@ -467,10 +494,14 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
         DISCORD_RICH_PRESENCE_ENABLED: false,
     });
     const [electronSettingsLoaded, setElectronSettingsLoaded] = useState(false);
+    // Keys stay in the main process; the renderer only knows which ones are saved, and the endpoint
+    // the OpenAI-compatible key is bound to. The GEMINI_API_KEY / OPENAI_API_KEY fields in
+    // electronSettings are drafts of a replacement key.
     const [savedElectronAiCredentials, setSavedElectronAiCredentials] = useState({
         AI_PROVIDER: 'gemini',
-        GEMINI_API_KEY: '',
-        OPENAI_API_KEY: '',
+        GEMINI_API_KEY: false,
+        OPENAI_API_KEY: false,
+        OPENAI_API_KEY_ENDPOINT: null as string | null,
     });
     const [electronSaveStatus, setElectronSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
     const [updateStatus, setUpdateStatus] = useState<ElectronUpdateStatus | null>(null);
@@ -489,7 +520,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
         ? 'configured'
         : !electronSettingsLoaded
             ? 'loading'
-            : savedAiApiKey.trim()
+            : savedAiApiKey
                 ? 'configured'
                 : 'missing';
     const showQuarkDownload = electronSettings.UPDATE_CHANNEL === 'realeco';
@@ -505,15 +536,17 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
             setIsElectron(true);
             (window as any).electron.getSettings().then((settings: any) => {
                 if (settings) {
+                    const { AI_API_KEYS_CONFIGURED: configuredKeys, OPENAI_API_KEY_ENDPOINT: openaiKeyEndpoint, ...rest } = settings;
                     setElectronSettings(prev => ({
                         ...prev,
-                        ...settings,
-                        OPENAI_API_TEMPERATURE: String(settings.OPENAI_API_TEMPERATURE ?? '').trim() || DEFAULT_OPENAI_TEMPERATURE,
+                        ...rest,
+                        OPENAI_API_TEMPERATURE: String(rest.OPENAI_API_TEMPERATURE ?? '').trim() || DEFAULT_OPENAI_TEMPERATURE,
                     }));
                     setSavedElectronAiCredentials({
                         AI_PROVIDER: settings.AI_PROVIDER === 'openai' ? 'openai' : 'gemini',
-                        GEMINI_API_KEY: String(settings.GEMINI_API_KEY ?? ''),
-                        OPENAI_API_KEY: String(settings.OPENAI_API_KEY ?? ''),
+                        GEMINI_API_KEY: configuredKeys?.GEMINI_API_KEY === true,
+                        OPENAI_API_KEY: configuredKeys?.OPENAI_API_KEY === true,
+                        OPENAI_API_KEY_ENDPOINT: typeof openaiKeyEndpoint === 'string' ? openaiKeyEndpoint : null,
                     });
                 }
             }).finally(() => setElectronSettingsLoaded(true));
@@ -562,31 +595,9 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
         });
     }, [updateStatus?.availableVersion, updateStatus?.updateSeen]);
 
-    const copyText = async (text: string) => {
-        if (navigator.clipboard?.writeText && window.isSecureContext) {
-            await navigator.clipboard.writeText(text);
-            return;
-        }
-
-        const textarea = document.createElement('textarea');
-        textarea.value = text;
-        textarea.setAttribute('readonly', '');
-        textarea.style.position = 'fixed';
-        textarea.style.opacity = '0';
-        textarea.style.pointerEvents = 'none';
-        document.body.appendChild(textarea);
-        textarea.select();
-
-        try {
-            document.execCommand('copy');
-        } finally {
-            document.body.removeChild(textarea);
-        }
-    };
-
     const handleCopyVersionInfo = async () => {
         try {
-            await copyText(VERSION_INFO);
+            await copyTextToClipboard(VERSION_INFO);
             setVersionCopied(true);
             window.setTimeout(() => setVersionCopied(false), 1800);
         } catch (error) {
@@ -620,25 +631,57 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                 : DEFAULT_OPENAI_TEMPERATURE;
             setElectronSaveStatus('saving');
             setElectronSettings(prev => ({ ...prev, OPENAI_API_TEMPERATURE: temperature }));
-            await (window as any).electron.saveSettings('GEMINI_API_KEY', electronSettings.GEMINI_API_KEY);
-            await (window as any).electron.saveSettings('OPENAI_API_KEY', electronSettings.OPENAI_API_KEY);
+            // Only a newly typed key is sent; an empty field keeps the saved one (clearing is its own action).
+            const geminiKeyDraft = electronSettings.GEMINI_API_KEY.trim();
+            const openaiKeyDraft = electronSettings.OPENAI_API_KEY.trim();
+            if (geminiKeyDraft) {
+                await (window as any).electron.saveSettings('GEMINI_API_KEY', geminiKeyDraft);
+            }
+            // URL before key: a new OpenAI-compatible key is bound to the URL saved at that moment.
             await (window as any).electron.saveSettings('OPENAI_API_URL', electronSettings.OPENAI_API_URL);
+            if (openaiKeyDraft) {
+                await (window as any).electron.saveSettings('OPENAI_API_KEY', openaiKeyDraft);
+            }
             await (window as any).electron.saveSettings('OPENAI_API_MODEL', electronSettings.OPENAI_API_MODEL);
             await (window as any).electron.saveSettings('OPENAI_API_TEMPERATURE', temperature);
+            await (window as any).electron.saveSettings('OPENAI_API_STREAM', electronSettings.OPENAI_API_STREAM === true);
             await (window as any).electron.saveSettings('AI_PROVIDER', electronSettings.AI_PROVIDER);
             await (window as any).electron.saveSettings('USE_SYSTEM_PROXY_FOR_AI', electronSettings.USE_SYSTEM_PROXY_FOR_AI);
             await (window as any).electron.saveSettings('ENABLE_UPDATE_CHECK', electronSettings.ENABLE_UPDATE_CHECK);
             await (window as any).electron.saveSettings('ENABLE_AUTO_UPDATE', electronSettings.ENABLE_AUTO_UPDATE);
             await (window as any).electron.saveSettings('UPDATE_CHANNEL', electronSettings.UPDATE_CHANNEL);
-            await (window as any).electron.saveSettings('DISCORD_RICH_PRESENCE_ENABLED', electronSettings.DISCORD_RICH_PRESENCE_ENABLED);
+            const savedSettings = await (window as any).electron.saveSettings('DISCORD_RICH_PRESENCE_ENABLED', electronSettings.DISCORD_RICH_PRESENCE_ENABLED);
+            const configuredKeys = savedSettings?.AI_API_KEYS_CONFIGURED;
             setSavedElectronAiCredentials({
                 AI_PROVIDER: electronSettings.AI_PROVIDER === 'openai' ? 'openai' : 'gemini',
-                GEMINI_API_KEY: electronSettings.GEMINI_API_KEY,
-                OPENAI_API_KEY: electronSettings.OPENAI_API_KEY,
+                GEMINI_API_KEY: configuredKeys?.GEMINI_API_KEY === true,
+                OPENAI_API_KEY: configuredKeys?.OPENAI_API_KEY === true,
+                OPENAI_API_KEY_ENDPOINT: typeof savedSettings?.OPENAI_API_KEY_ENDPOINT === 'string'
+                    ? savedSettings.OPENAI_API_KEY_ENDPOINT
+                    : null,
             });
+            // Drop the saved drafts so the field goes back to the "saved" placeholder; keep anything typed meanwhile.
+            setElectronSettings(prev => ({
+                ...prev,
+                GEMINI_API_KEY: prev.GEMINI_API_KEY.trim() === geminiKeyDraft ? '' : prev.GEMINI_API_KEY,
+                OPENAI_API_KEY: prev.OPENAI_API_KEY.trim() === openaiKeyDraft ? '' : prev.OPENAI_API_KEY,
+            }));
             setElectronSaveStatus('saved');
             setTimeout(() => setElectronSaveStatus('idle'), 2000);
         }
+    };
+
+    const handleClearAiApiKey = async (key: 'GEMINI_API_KEY' | 'OPENAI_API_KEY') => {
+        if (!window.electron?.saveSettings) {
+            return;
+        }
+        const settings = await window.electron.saveSettings(key, '');
+        setSavedElectronAiCredentials(prev => ({
+            ...prev,
+            [key]: settings?.AI_API_KEYS_CONFIGURED?.[key] === true,
+            OPENAI_API_KEY_ENDPOINT: typeof settings?.OPENAI_API_KEY_ENDPOINT === 'string' ? settings.OPENAI_API_KEY_ENDPOINT : null,
+        }));
+        setElectronSettings(prev => ({ ...prev, [key]: '' }));
     };
 
     const handleToggleDiscordPresence = async (enabled: boolean) => {
@@ -753,6 +796,11 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
     const [navidromeTestStatus, setNavidromeTestStatus] = useState<'idle' | 'testing' | 'success' | 'failed'>('idle');
     const [navidromeConfigured, setNavidromeConfigured] = useState(false);
     const [navidromeServerProfile, setNavidromeServerProfile] = useState<NavidromeServerProfile | null>(null);
+    // Docker 部署预置了凭据时，手动配置可以随时切回预置。
+    const [navidromePresetAvailable, setNavidromePresetAvailable] = useState(false);
+    const [navidromeUsesPreset, setNavidromeUsesPreset] = useState(false);
+    const [navidromeRestoreFailed, setNavidromeRestoreFailed] = useState(false);
+    const [navidromeRestoring, setNavidromeRestoring] = useState(false);
 
     // Load Navidrome config on mount
     useEffect(() => {
@@ -762,8 +810,26 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
             setNavidromeUsername(config.username);
             setNavidromeConfigured(true);
             setNavidromeServerProfile(getCachedNavidromeServerProfile());
+            setNavidromeUsesPreset(getNavidromeConfigOrigin() === 'server');
         }
+
+        let cancelled = false;
+        void fetchNavidromeServerPreset().then((preset) => {
+            if (!cancelled) setNavidromePresetAvailable(Boolean(preset));
+        });
+        return () => {
+            cancelled = true;
+        };
     }, []);
+
+    const refreshServerProfile = (config: NavidromeConfig) => {
+        void refreshNavidromeServerProfile(config)
+            .then(setNavidromeServerProfile)
+            .catch((error) => {
+                console.warn('[Settings] Failed to refresh Navidrome server profile:', error);
+                setNavidromeServerProfile(null);
+            });
+    };
 
     // Test Navidrome connection
     const testNavidromeConnection = async () => {
@@ -781,15 +847,15 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
 
         const success = await navidromeApi.ping(config);
         if (success) {
+            // 先按手动配置立刻存下，不让预置请求挡住保存；填的正好是预置的话，预置返回后再改标。
             saveNavidromeConfig(config);
             setNavidromeConfigured(true);
+            setNavidromeUsesPreset(false);
             setNavidromeTestStatus('success');
-            void refreshNavidromeServerProfile(config)
-                .then(setNavidromeServerProfile)
-                .catch((error) => {
-                    console.warn('[Settings] Failed to refresh Navidrome server profile:', error);
-                    setNavidromeServerProfile(null);
-                });
+            refreshServerProfile(config);
+            void markNavidromeConfigAsPresetIfMatching(config).then((marked) => {
+                if (marked) setNavidromeUsesPreset(true);
+            });
         } else {
             setNavidromeTestStatus('failed');
         }
@@ -807,12 +873,34 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
     // Clear Navidrome config
     const handleClearNavidrome = () => {
         clearNavidromeConfig();
+        dismissNavidromeServerPreset();
         setNavidromeUrl('');
         setNavidromeUsername('');
         setNavidromePassword('');
         setNavidromeConfigured(false);
+        setNavidromeUsesPreset(false);
         setNavidromeServerProfile(null);
         setNavidromeTestStatus('idle');
+    };
+
+    // Drop the manual config and go back to the Docker preset
+    const handleRestoreNavidromePreset = async () => {
+        if (navidromeRestoring) return;
+        setNavidromeRestoreFailed(false);
+        setNavidromeRestoring(true);
+        const config = await restoreNavidromeServerPreset().finally(() => setNavidromeRestoring(false));
+        if (!config) {
+            setNavidromeRestoreFailed(true);
+            return;
+        }
+        setNavidromeUrl(config.serverUrl);
+        setNavidromeUsername(config.username);
+        setNavidromePassword('');
+        setNavidromeConfigured(true);
+        setNavidromeUsesPreset(true);
+        setNavidromeTestStatus('idle');
+        setNavidromeServerProfile(getCachedNavidromeServerProfile());
+        refreshServerProfile(config);
     };
 
     const formatBytes = (bytes: number) => {
@@ -875,7 +963,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
 
     const handleCopyStageAddress = async (address: string) => {
         try {
-            await copyText(address);
+            await copyTextToClipboard(address);
             setStageAddressCopied(true);
             window.setTimeout(() => setStageAddressCopied(false), 1800);
         } catch (error) {
@@ -1237,9 +1325,10 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
     );
     const canEnableAutoUpdate = Boolean(electronSettings.ENABLE_UPDATE_CHECK && updateStatus?.autoUpdateSupported);
 
+    const isBravaisSuiteActive = useIsBravaisLibraryActive();
     const settingsNavGroups = useMemo(
-        () => buildSettingsNavGroups(t, { isElectron }),
-        [t, isElectron],
+        () => buildSettingsNavGroups(t, { isElectron, hasLibrarySuiteChoice: hasLibrarySuiteChoice(), isBravaisSuiteActive }),
+        [t, isElectron, isBravaisSuiteActive],
     );
     const activeSettingsNavItem = findSettingsNavItem(settingsNavGroups, activeSettingsSection);
     const prefersReducedMotion = useReducedMotionFor('settingsScroll');
@@ -1437,16 +1526,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                                         <CircleHelp size={16} />
                                         {t('aiHelp.openButton', 'Need help?')}
                                     </button>
-                                    {/* 一排单色胶囊里唯一带颜色的那颗，靠色彩而不是体积被看见。 */}
-                                    <button
-                                        type="button"
-                                        onClick={openDiscordInvite}
-                                        className="px-6 py-2 bg-[#5865F2]/15 hover:bg-[#5865F2]/25 ring-1 ring-inset ring-[#5865F2]/30 transition-colors rounded-full text-sm font-medium flex items-center gap-2"
-                                        style={{ color: 'var(--text-primary)' }}
-                                    >
-                                        <img src={discordIconUrl} alt="" aria-hidden className="h-[18px] w-[18px] rounded-[5px]" />
-                                        {t('help.joinDiscord', 'Join our Discord')}
-                                    </button>
+                                    <JoinCommunityButton />
                                 </div>
 
                                 {/* Author Info (Moved from Footer) */}
@@ -1479,6 +1559,15 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                                                 ? t('status.copied')
                                                 : VERSION_INFO}
                                         </button>
+                                        {BUILD_KIND !== 'official' && (
+                                            <p
+                                                className={`max-w-sm text-[11px] leading-snug font-sans ${BUILD_KIND === 'unofficial' ? 'text-amber-500/90' : 'opacity-60'}`}
+                                                style={BUILD_KIND === 'unofficial' ? undefined : { color: 'var(--text-secondary)' }}
+                                                data-build-kind-notice={BUILD_KIND}
+                                            >
+                                                {t(BUILD_KIND === 'unofficial' ? 'options.unofficialBuildNotice' : 'options.selfHostedBuildNotice')}
+                                            </p>
+                                        )}
 
                                         {/* 第二行：版本状态与安装操作 */}
                                         {updateStatus?.availableVersion && (
@@ -1607,7 +1696,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                                     <SettingsSidebarWide
                                         groups={settingsNavGroups}
                                         activeSectionId={activeSettingsSection}
-                                        onSelectSection={setActiveSettingsSection}
+                                        onSelectSection={handleSelectSettingsSection}
                                         activeAnchorId={activeAnchorId}
                                         onSelectAnchor={(sectionId, anchorId) => {
                                             if (sectionId === activeSettingsSection) {
@@ -1623,7 +1712,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                                     <SettingsSidebarChips
                                         groups={settingsNavGroups}
                                         activeSectionId={activeSettingsSection}
-                                        onSelectSection={setActiveSettingsSection}
+                                        onSelectSection={handleSelectSettingsSection}
                                         isDaylight={isDaylight}
                                     />
                                 )}
@@ -1733,7 +1822,12 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                                                     navidromeTestStatus,
                                                     navidromeUrl,
                                                     navidromeUsername,
+                                                    navidromeCanRestorePreset: navidromePresetAvailable && !navidromeUsesPreset,
+                                                    navidromeRestoreFailed,
+                                                    navidromeRestoring,
+                                                    navidromeUsesPreset,
                                                     onClearNavidrome: handleClearNavidrome,
+                                                    onRestoreNavidromePreset: handleRestoreNavidromePreset,
                                                     onToggleNavidrome: handleToggleNavidromeEnabled,
                                                     setNavidromePassword,
                                                     setNavidromeUrl,
@@ -1754,7 +1848,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                                                     playerCapConnectionStatus,
                                                     playerCapPlayers,
                                                     obsBrowserSourceStatus,
-                                                    onCopyText: copyText,
+                                                    onCopyText: copyTextToClipboard,
                                                     onRegenerateObsBrowserSourceToken,
                                                     onRegenerateStageToken,
                                                     onStageSourceChange,
@@ -1797,11 +1891,9 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                                         {activeSettingsSection === 'desktop' && isElectron && (
                                             <DesktopSettingsSubview
                                                 chrome={{
-                                                    borderColor,
                                                     isDaylight,
                                                     isElectron,
                                                     settingsCardClass,
-                                                    settingsIconClass,
                                                     successTextColor,
                                                     theme,
                                                     toggleOffBackgroundClass,
@@ -1818,6 +1910,12 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                                                     onOpenChinaDownload: handleOpenChinaDownload,
                                                     onUpdateChannelChange: handleUpdateChannelChange,
                                                     onSaveElectronSettings: saveElectronSettings,
+                                                    onClearAiApiKey: handleClearAiApiKey,
+                                                    savedAiApiKeys: {
+                                                        GEMINI_API_KEY: savedElectronAiCredentials.GEMINI_API_KEY,
+                                                        OPENAI_API_KEY: savedElectronAiCredentials.OPENAI_API_KEY,
+                                                    },
+                                                    savedOpenAIKeyEndpoint: savedElectronAiCredentials.OPENAI_API_KEY_ENDPOINT,
                                                     onToggleAutoUpdate: handleToggleAutoUpdate,
                                                     onToggleUpdateCheck: handleToggleUpdateCheck,
                                                     setElectronSettings,
@@ -1828,10 +1926,16 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                                                 preferences={{
                                                     hideTaskbarIcon,
                                                     hideRemoteControlTaskbarIcon,
+                                                    hideRemoteControlTitlebar,
+                                                    remoteControlClickThrough,
                                                     minimizeToTray,
+                                                    closeToTray,
                                                     onToggleHideTaskbarIcon,
                                                     onToggleHideRemoteControlTaskbarIcon,
+                                                    onToggleHideRemoteControlTitlebar,
+                                                    onToggleRemoteControlClickThrough,
                                                     onToggleMinimizeToTray,
+                                                    onToggleCloseToTray,
                                                     onToggleOpenPlayerOnLaunch,
                                                     openPlayerOnLaunch,
                                                     wallpaperMode,
@@ -1840,6 +1944,19 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                                                     onToggleWallpaperMacAutohideDock,
                                                 }}
                                             />
+                                        )}
+                                        {activeSettingsSection === 'graphics' && (
+                                            <GraphicsSettingsSubview
+                                                isDaylight={isDaylight}
+                                                settingsCardClass={settingsCardClass}
+                                                toggleOffBackgroundClass={toggleOffBackgroundClass}
+                                                utilityGhostButtonClass={utilityGhostButtonClass}
+                                                rangeInputClass={rangeInputClass}
+                                                theme={theme}
+                                            />
+                                        )}
+                                        {activeSettingsSection === 'mods' && isElectron && (
+                                            <ModsSettingsSubview isDaylight={isDaylight} theme={theme} />
                                         )}
                                         {activeSettingsSection === 'lab' && (
                                             <LabSettingsModal
@@ -1976,6 +2093,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                         pendoloTuning={pendoloTuning}
                         sonnetTuning={sonnetTuning}
                         temperaTuning={temperaTuning}
+                        lumiereTuning={lumiereTuning}
                         cappellaCustomEmojiImages={cappellaCustomEmojiImages}
                         cappellaCustomAvatarImages={cappellaCustomAvatarImages}
                         monetPortraitImage={monetPortraitImage}
@@ -2035,6 +2153,8 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                         onResetSonnetTuning={onResetSonnetTuning}
                         onTemperaTuningChange={onTemperaTuningChange}
                         onResetTemperaTuning={onResetTemperaTuning}
+                        onLumiereTuningChange={onLumiereTuningChange}
+                        onResetLumiereTuning={onResetLumiereTuning}
                         onUploadMonetPortraitImage={onUploadMonetPortraitImage}
                         onClearMonetPortraitImage={onClearMonetPortraitImage}
                         isLoadingMonetPortraitImage={isLoadingMonetPortraitImage}
@@ -2067,6 +2187,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                             pendolo: pendoloTuning,
                             sonnet: sonnetTuning,
                             tempera: temperaTuning,
+                            lumiere: lumiereTuning,
                         }}
                         staticMode={staticMode}
                         visualizerOpacity={visualizerOpacity}
@@ -2136,7 +2257,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                 isDaylight={isDaylight}
                 theme={theme}
                 onClose={() => setShowAiHelpPrompt(false)}
-                onCopyText={copyText}
+                onCopyText={copyTextToClipboard}
             />
             <ReleaseNotesDialog
                 isOpen={showReleaseNotes}

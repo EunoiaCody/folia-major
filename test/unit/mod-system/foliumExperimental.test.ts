@@ -17,14 +17,31 @@ vi.hoisted(() => {
     });
 });
 
+// Folium 1.4 lyrics parse in the lyrics worker; run the same parser inline.
+vi.mock('@/utils/lyrics/workerClient', async () => {
+    const { parseLyricsByFormat } = await import('@/utils/lyrics/parserCore');
+    return {
+        parseLyricsAsync: vi.fn(async (
+            format: Parameters<typeof parseLyricsByFormat>[0],
+            content: string,
+            translation: string,
+            options: Parameters<typeof parseLyricsByFormat>[3],
+            romanization: string,
+        ) => parseLyricsByFormat(format, content, translation, options, romanization)),
+    };
+});
+
 import type { SongResult } from '@/types';
 import type { ModRuntimeInfo } from '@/mods/types';
+import type { FoliumRemoteActionsDef, FoliumRemoteActionsHandle } from '@/mods/folium/contract';
 import { getOnlineMusicProvider } from '@/services/onlineMusic/providerRegistry';
+import { omni } from '@/services/onlineMusic/omni';
 import { applyOmniAudioHook, applyOmniLyricsHook } from '@/services/hostExtensionHooks';
 import { findPonderTarget } from '@/components/ponder/ponderRegistry';
 import i18n from '@/i18n/config';
 import { createFoliumExperimental, ponderTargetsRegistry } from '@/mods/folium/experimental';
 import { omniProvidersRegistry } from '@/mods/folium/registries/omniProviders';
+import { remoteActionsRegistry } from '@/mods/folium/registries/remoteActions';
 import { createFoliumClientApi } from '@/mods/folium/api';
 import { removeFoliumEventHandlers } from '@/mods/folium/events';
 
@@ -42,6 +59,7 @@ const mod = (overrides: Partial<ModRuntimeInfo> = {}): ModRuntimeInfo => ({
 afterEach(() => {
     omniProvidersRegistry.unregisterAll('mod-a');
     ponderTargetsRegistry.unregisterAll('mod-a');
+    remoteActionsRegistry.unregisterAll('mod-a');
     removeFoliumEventHandlers('mod-a');
 });
 
@@ -71,6 +89,33 @@ describe('omni.providers', () => {
 
         handle.unregister();
         expect(getOnlineMusicProvider('folium.mod-a.radio')).toBeNull();
+    });
+
+    it('passes Folium 1.4 word-timed lyrics and chorus ranges through Omni', async () => {
+        omniProvidersRegistry.register('mod-a', {
+            id: 'wbw',
+            displayName: 'Word by word',
+            search: async () => ({ items: [{ id: 's1', title: 'S', artists: [] }], hasMore: false }),
+            getLyrics: async () => ({
+                main: { format: 'lrc', text: '[00:01.00]你好\n[00:03.00]世界', translationText: '[00:01.00]hello\n[00:03.00]world' },
+                wordByWord: { format: 'yrc', text: '[1000,800](1000,250,0)你(1250,250,0)好\n[3000,800](3000,400,0)世(3400,400,0)界' },
+                chorusRanges: [{ startTime: 2.5, endTime: 4 }],
+            }),
+        });
+        const provider = getOnlineMusicProvider('folium.mod-a.wbw');
+        expect(provider?.capabilities.wordByWordLyrics).toBe(true);
+
+        const [song] = (await provider!.search!.searchSongs('q', 10, 0)).items;
+        const result = await omni.getLyrics(song);
+        const lines = result.lyrics!.lines.filter((line) => line.fullText !== '......');
+
+        expect(result.lyrics?.isWordByWord).toBe(true);
+        expect(lines.map((line) => [line.fullText, line.translation, Boolean(line.isChorus)])).toEqual([
+            ['你好', 'hello', false],
+            ['世界', 'world', true],
+        ]);
+        expect(lines[1].words.map((word) => word.startTime)).toEqual([3, 3.4]);
+        expect(result.chorusRanges).toEqual([{ startTime: 2.5, endTime: 4 }]);
     });
 
     it('refuses a provider with no capability', () => {
@@ -186,10 +231,41 @@ describe('experimental gate', () => {
             experimental: createFoliumExperimental(mod()),
         });
         expect(() => api.experimental['omni.providers']).toThrow('experimental-not-declared:omni.providers');
+        expect(() => api.experimental['remote.actions']).toThrow('experimental-not-declared:remote.actions');
         expect(() => api.events.on('omni.audioSourceResolved', () => {})).toThrow('experimental-not-declared:omni.hooks');
 
         const optedIn = mod({ experimental: ['omni.providers'] });
         const allowed = createFoliumClientApi(optedIn, { context: 'main', internals: null, experimental: createFoliumExperimental(optedIn) });
         expect(allowed.experimental['omni.providers']).toHaveProperty('register');
+    });
+
+    it('exposes only an owned action registration through remote.actions opt-in', () => {
+        const owner = mod({ experimental: ['remote.actions'] });
+        const api = createFoliumClientApi(owner, { context: 'main', internals: null, experimental: createFoliumExperimental(owner) });
+        const remote = api.experimental['remote.actions'] as { register: (def: FoliumRemoteActionsDef) => FoliumRemoteActionsHandle };
+        const handle = remote.register({ id: 'room', actions: () => [] });
+        expect(handle.id).toBe('mod-a:room');
+        expect(handle.invalidate).toBeTypeOf('function');
+        expect(remoteActionsRegistry.list()).toHaveLength(1);
+        handle.unregister();
+        expect(remoteActionsRegistry.list()).toHaveLength(0);
+    });
+});
+
+
+describe('player.layout declaration without a standalone experimental service', () => {
+    it('keeps layout access on the stage context and leaves the stable Folium version at 1.5', () => {
+        for (const experimental of [[], ['player.layout']]) {
+            const descriptor = mod({ experimental });
+            const api = createFoliumClientApi(descriptor, {
+                context: 'main', internals: null, experimental: createFoliumExperimental(descriptor),
+            });
+            expect(api.host.folium).toEqual({ major: 1, minor: 5 });
+            expect(() => api.experimental['player.layout']).toThrow(
+                experimental.length ? 'experimental-unknown:player.layout' : 'experimental-not-declared:player.layout',
+            );
+        }
+        const exported = createFoliumClientApi(mod({ experimental: ['player.layout'] }), { context: 'export', internals: null });
+        expect(() => exported.experimental['player.layout']).toThrow('experimental-unknown:player.layout');
     });
 });

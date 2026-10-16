@@ -13,6 +13,7 @@ import type { AudioQualityPreference, MediaId } from '../types/onlineMusic';
 import { setStatusMessage as setStatusMsg } from '../stores/useStatusMessageStore';
 import { setCurrentSong, setPlayQueue } from '../stores/usePlaybackStore';
 import { useAudioSettingsStore } from '../stores/useAudioSettingsStore';
+import { omni } from '../services/onlineMusic/omni';
 
 // src/hooks/useSessionRestoreController.ts
 
@@ -37,6 +38,10 @@ type UseSessionRestoreControllerParams = {
      * alone so the session comes back paused; the lab switch below is the only thing that arms it.
      */
     shouldAutoPlayRef: MutableRefObject<boolean>;
+    /** The playing song's key that recovery and failure handling gate on; restore commits to a song like playSong does. */
+    currentSongRef: MutableRefObject<string | number | null>;
+    /** Bumped with each commit of the current song (see usePlaybackRuntimeRefs). */
+    playbackGenerationRef: MutableRefObject<number>;
 };
 
 // Restores the main playback session without pushing more boot logic into App.tsx.
@@ -52,6 +57,8 @@ export function useSessionRestoreController({
     loadLocalPlaylists,
     canRestoreSession = true,
     shouldAutoPlayRef,
+    currentSongRef,
+    playbackGenerationRef,
 }: UseSessionRestoreControllerParams) {
     const audioQuality = useAudioSettingsStore(state => state.audioQuality);
 
@@ -95,6 +102,10 @@ export function useSessionRestoreController({
                     return;
                 }
 
+                // Leave unsupported sessions cached for a build that registers their provider.
+                if (lastSong.sourceRef?.kind === 'online' && !omni.canPlaySong(lastSong)) return;
+                lastQueue = lastQueue?.filter(song => song.sourceRef?.kind !== 'online' || omni.canPlaySong(song)) ?? null;
+
                 const containsLocalSnapshot = [lastSong, ...(lastQueue || [])].some(song => (
                     Boolean((song as any).isLocal)
                     || Boolean((song as any).localRef?.songId)
@@ -132,6 +143,10 @@ export function useSessionRestoreController({
                     }
                 }
                 setCurrentSong(lastSong);
+                // Left unset, every "is this still the current song" check reads the restored song
+                // as already replaced, and its source refresh or failure message is dropped as stale.
+                currentSongRef.current = getPlaybackSongKey(lastSong);
+                playbackGenerationRef.current += 1;
                 setPlayQueue(lastQueue && lastQueue.length > 0 ? lastQueue : [lastSong]);
 
                 // Read at restore time rather than subscribed: this effect runs once, and the
@@ -145,7 +160,7 @@ export function useSessionRestoreController({
                 }
 
                 try {
-                    await restorePlaybackSourceForSong(lastSong, {
+                    const outcome = await restorePlaybackSourceForSong(lastSong, {
                         audioQuality,
                         userId,
                         blobUrlRef,
@@ -155,10 +170,20 @@ export function useSessionRestoreController({
                         persistLastPlaybackCache,
                         queue: lastQueue || [lastSong],
                     });
+                    // A failed restore landed no source either, so the intent is withdrawn as below.
+                    // A stale one is left alone: the listener has already picked another song, and
+                    // the intent now belongs to that one.
+                    if (outcome === 'failed') {
+                        shouldAutoPlayRef.current = false;
+                    }
                 } catch (error) {
                     // No source ever landed, so the intent was never spent. Left standing it would
                     // fire on whatever the listener plays next, which they did not ask for.
-                    shouldAutoPlayRef.current = false;
+                    // A throw that lands after the listener switched songs is stale like the outcome
+                    // above: the intent belongs to their song by then and stays.
+                    if (currentSongRef.current === getPlaybackSongKey(lastSong)) {
+                        shouldAutoPlayRef.current = false;
+                    }
                     console.warn('Failed to restore audio/lyrics for last session', error);
                 }
 

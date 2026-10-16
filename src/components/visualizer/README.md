@@ -35,18 +35,19 @@ App / ThemePark / VisPlayground / OBS source
 | mode | 显示名 | 主要 renderer / 辅助文件 |
 | --- | --- | --- |
 | `still` | 静止 | `still/VisualizerStill.tsx`（不挂载共享背景层） |
-| `classic` | Luminous | `classic/Visualizer.tsx`、`classic/tuning.ts` |
-| `cadenza` | Mindscape | `cadenza/VisualizerCadenza.tsx`、`cadenza/tuning.ts` |
-| `partita` | 云阶 | `partita/VisualizerPartita.tsx`、`partita/tuning.ts` |
+| `classic` | Luminous | `classic/Visualizer.tsx`、共用 `GlowWord.tsx` / `glowWordTiming.ts` / `glowWordVariants.ts`、`classic/tuning.ts` |
+| `cadenza` | Mindscape | `cadenza/VisualizerCadenza.tsx`（RAF 渲染）、`cadenzaPreparedState.ts` / `cadenzaFragments.ts` / `cadenzaPlacements.ts`（测量与落点）、`cadenzaEnvelopes.ts`（时序包络）、`cadenza/tuning.ts` |
+| `partita` | 云阶 | `partita/VisualizerPartita.tsx`、`partitaLayout.ts`（分栏布局与缓存）、`PartitaChunk.tsx`、共用 `GlowWord.tsx`、`partita/tuning.ts` |
 | `fume` | Fume | `fume/VisualizerFume.tsx`、`fume/tuning.ts` |
-| `cappella` | Cappella | `cappella/VisualizerCappella.tsx`、`avatarImages.ts`、`emoImages.ts` |
+| `cappella` | Cappella | `cappella/VisualizerCappella.tsx`、`CappellaMessageRow.tsx` / `CappellaBubbleParts.tsx`（消息行与气泡）、`cappellaMessages.ts`（消息编排）、`cappellaReveal.ts` / `cappellaBubbleMetrics.ts`（逐字时序与测量）、`avatarImages.ts`、`emoImages.ts` |
 | `tilt` | Tilt | `tilt/VisualizerTilt.tsx`、`tilt/tuning.ts` |
-| `claddagh` | Claddagh | `claddagh/VisualizerCladdagh.tsx`、`claddagh/tuning.ts` |
-| `monet` | Monet | `monet/VisualizerMonet.tsx`、`monet/monetLyricsModel.ts`、`monet/tuning.ts` |
+| `claddagh` | Claddagh | `claddagh/VisualizerCladdagh.tsx`、`CladdaghRingLine.tsx`（环上一行）、`claddaghTimeline.ts` / `claddaghLayout.ts` / `claddaghGlow.ts`、`claddagh/tuning.ts` |
+| `monet` | Monet | `monet/VisualizerMonet.tsx`、`MonetLyricsRail.tsx`（歌词栏外壳与滚动）、`MonetRailLine.tsx` / `MonetRailTokens.tsx`（行与扫字）、`monetRailLayout.ts`、`monet/monetLyricsModel.ts`、`monet/tuning.ts` |
 | `diorama` | 镜台 | `diorama/VisualizerDiorama.tsx`、`diorama/DioramaScene.tsx`、`diorama/dioramaTextRaster.ts` |
 | `pendolo` | Pendolo | `pendolo/VisualizerPendolo.tsx`、`pendolo/pendoloTextLayout.ts`、`pendolo/pendoloTimeline.ts` |
 | `sonnet` | 商籁 | `sonnet/VisualizerSonnet.tsx`、`sonnet/createSonnetPixiRuntime.ts`、`sonnet/*` |
 | `tempera` | 凝彩 | `tempera/VisualizerTempera.tsx`、`tempera/createTemperaPixiRuntime.ts`、`tempera/*` |
+| `lumiere` | 绘光 | `lumiere/VisualizerLumiere.tsx`、`lumiere/createLumierePixiRuntime.ts`、`lumiere/*` |
 
 `registry.tsx` 的默认模式是 `classic`。模式枚举/共享 tuning map 见 `src/types.ts`、`definition.ts`、`tuningRegistry.ts`。
 
@@ -69,7 +70,7 @@ App / ThemePark / VisPlayground / OBS source
 
 `VisualizerSharedProps` 是模式共同输入，包含 `MotionValue currentTime`、当前行/全部歌词、主题与字幕主题、音频分析值、背景/透明度、字幕显示开关、播放状态、seek/back/panel callbacks、资源和模式 tuning。完整字段以代码为准；本 README 只保留定位信息。
 
-当前 tuning 覆盖 11 个模式，并通过 `VisualizerRenderer` 的 `applyVisualizerTuning` 统一注入。模式级设置面板和 reset 由各自 `entry.tsx` / `tuning.ts` 提供，再由 `settingsPanels.tsx` 和 `VisPlaygroundSettingsPanel.tsx` 复用。
+当前 tuning 覆盖 13 个模式，并通过 `VisualizerRenderer` 的 `applyVisualizerTuning` 统一注入。模式级设置面板和 reset 由各自 `entry.tsx` / `tuning.ts` 提供，再由 `settingsPanels.tsx` 和 `VisPlaygroundSettingsPanel.tsx` 复用。
 
 ### Lyrics pipeline
 
@@ -116,15 +117,15 @@ Visualizer 消费已解析的 `LyricData` / `Line` / `Word`，不负责解析 `.
 
 ### Diorama
 
-`diorama/VisualizerDiorama.tsx` 进入 React Three Fiber 场景；场景/粒子/相机/文字光栅化分别看 `DioramaScene.tsx`、`dioramaParticle*.ts`、`cameraPath.ts`、`dioramaTextRaster.ts`。连续场景数据不要提升到 React state。
+`diorama/VisualizerDiorama.tsx` 进入 React Three Fiber 场景；场景/粒子/相机/文字光栅化分别看 `DioramaScene.tsx`（结构推导 `dioramaSceneLayout.ts`、每帧写入 `dioramaSceneFrame.ts`、邻行栅格缓存 `dioramaLineRasterCache.ts`、当前行单元平面 `DioramaActiveUnitPlanes.tsx`）、`dioramaParticle*.ts`、`cameraPath.ts`、`dioramaTextRaster.ts`。连续场景数据不要提升到 React state。
 
 ### Pendolo
 
-`pendolo/VisualizerPendolo.tsx` 是 React 外壳；`PendoloClockworkCanvas.tsx` 负责时钟机械 canvas，`pendoloTextLayout.ts`、`pendoloTimeline.ts`、`pendoloGeometry.ts` 负责有界布局与时间线，`PendoloSettingsPanel.tsx` 负责调参。
+`pendolo/VisualizerPendolo.tsx` 是 React 外壳；`PendoloClockworkCanvas.tsx` 负责时钟机械 canvas（优先 WebGL2：`pendoloClockworkWebGL.ts` 绘制、`pendoloClockworkMeshes.ts` 缓存齿轮几何、`pendoloClockworkMotion.ts` 推进摆动；不支持时退回 `pendoloClockworkDraw2d.ts` 的 Canvas2D；`pendoloClockworkScene.ts` 放共用的帧输入、配色与画布包围盒），`pendoloTextLayout.ts`、`pendoloTimeline.ts`、`pendoloGeometry.ts` 负责有界布局与时间线，`PendoloSettingsPanel.tsx` 负责调参。
 
 ### Sonnet
 
-`sonnet/VisualizerSonnet.tsx` 负责 React shell/subtitle，`createSonnetPixiRuntime.ts` 创建 Pixi runtime；其余 `sonnet*` 文件按 scene builder、shot flow、glyph/typography、post-process、resource pool 分工。注意 Pixi runtime、纹理和 RAF 的销毁。
+`sonnet/VisualizerSonnet.tsx` 负责 React shell/subtitle，`createSonnetPixiRuntime.ts` 创建 Pixi runtime（只管生命周期、段落场景缓存、换歌溶解和每帧调度；shot 逐帧姿态 `sonnetShotFrame.ts`、场景转场选择 `sonnetSceneFrame.ts`、画框 `sonnetFrameOverlay.ts`、片尾模糊 `sonnetOutroBlur.ts`、主题图标纹理 `sonnetIconTextures.ts`）；其余 `sonnet*` 文件按 scene builder、shot flow、glyph/typography、post-process、resource pool 分工。注意 Pixi runtime、纹理和 RAF 的销毁。
 
 ### Tempera
 
@@ -135,6 +136,20 @@ Visualizer 消费已解析的 `LyricData` / `Line` / `Word`，不负责解析 `.
 - `temperaLayout.ts` + `temperaMotion.ts`：拼贴排版与逐字入场求解
 - `temperaDifferenceFilter.ts`：文字对背景逐像素反色，改动前务必先读那份说明里的约束
 - Tempera 渲染层不消费音频（`audioPower`/`audioBands` 只传给共享背景层）。
+
+### Lumiere
+
+绘光：舞台光式的歌词 PV——体积光束、烟雾、线稿与浮尘组成的「图形组」，歌词按光束明暗点亮。快速定位：
+
+- `lumiere/VisualizerLumiere.tsx`：React shell / subtitle；`createLumierePixiRuntime.ts`：Pixi runtime（WebGL only，建一次、换歌就地交接，scene cache ±1，一帧最多做一件贵的事）
+- `lumiereProgram.ts` + `program.ts`：整首编译（段落首尾相接铺满时间轴、镜头、光位、段落转场）；纯音乐编译成只有间奏镜头的程序，不造 ♪ 虚拟行
+- `scene.ts` / `lumiereUnit.ts`：一个段落一个场景，运镜在场景内部；运行时只在外面的 holder 上套转场帧（`lumiereSceneFrames.ts`：出场帧 + 边界后的交叉渐变，熄灯的变暗由场景自己的 fadeOut 完成）
+- `lumiereSeamless.ts`：轨迹过渡（tuning `seamlessTransitions`，默认开）把按段落编好的程序并成整首一个单元——镜头 / 光位不变，段落之间也走光位交接，运镜按原段落往返推拉；它是编译选项（`LUMIERE_COMPILE_KEYS`），切换时重新编译、经同曲 swapSong 清场景缓存，不重建 WebGL。歌词窗口按需排版（只排当前行前后几行，见 `text/windowLines.ts`），所以整首一个单元建场景约 45–50 ms，与按段落相近；`lumiereUnitLayout.ts` 放领头光位 / 逐行排版 / 运镜这几个由镜头决定的纯函数
+- `lumiereRuntimeTuning.ts`：用户 tuning → 场景 tuning、画质档（full / balanced / low 只降图形组 filter 分辨率、封顶烟雾倍频，文字保持满分辨率）、哪些改动要防抖重建场景
+- `lumiereAudio.ts`：`audioBands.bass` / `treble` / `audioPower` 归一化到 0..1（主播放器 0..255、预览 0..1）并做起音 / 释放平滑；渲染层消费音频
+- `lumiereCreditsLayer.ts` + `credits.ts`：片尾卡在最后一句唱完前几秒才建；`overlay.ts`：取景器画框
+- `lumiereDarkField.ts`：暗场底（tuning `darkField`，浅色主题保底 0.94）是运行时铺在所有场景与片尾卡之下的一整块底，不随段落转场变化；光场着色器的 `uDark` 在 folia 里恒为 0
+- 歌词字号由光位的文字区决定，通用字号设置只影响底部字幕
 
 ## Host surfaces
 

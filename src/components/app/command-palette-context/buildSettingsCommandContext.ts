@@ -12,15 +12,21 @@ import { useGridViewSettingsStore } from '../../../stores/useGridViewSettingsSto
 import { useLatticeSettingsStore } from '../../../stores/useLatticeSettingsStore';
 import { useMotionSettingsStore } from '../../../stores/useMotionSettingsStore';
 import { usePlaybackEntryViewStore } from '../../../stores/usePlaybackEntryViewStore';
+import { hasLibrarySuiteChoice } from '../../../library/registry';
+import { chooseLibrarySuite, getActiveLibrarySuiteId, listLibrarySuiteOptions } from '../../../library/app/librarySuiteChoice';
+import { isBravaisLibraryActive } from '../../../library/app/bravaisLibraryActive';
+import { useLibraryWallLookStore } from '../../../stores/useLibraryWallLookStore';
 import { usePonderStore } from '../../../stores/usePonderStore';
 import { useHomeLayoutSettingsStore } from '../../../stores/useHomeLayoutSettingsStore';
 import { usePlayerChromeSettingsStore } from '../../../stores/usePlayerChromeSettingsStore';
 import { useSettingsModalStore } from '../../../stores/useSettingsModalStore';
+import { useStageSettingsStore } from '../../../stores/useStageSettingsStore';
 import { useSleepTimerStore } from '../../../stores/useSleepTimerStore';
 import { useTypographySettingsStore } from '../../../stores/useTypographySettingsStore';
 import { useThemeQuickEditorStore } from '../../../stores/useThemeQuickEditorStore';
 import { usePlayerBottomBarLayoutStore } from '../../../stores/usePlayerBottomBarLayoutStore';
 import type { SongResult } from '../../../types';
+import { cycleSubtitleContentMode } from '../../../utils/lyrics/alternateText';
 
 // src/components/app/command-palette-context/buildSettingsCommandContext.ts
 // The `settings` namespace of the palette context.
@@ -73,13 +79,42 @@ export const buildSettingsCommandContext = (
         ),
         subtitleContentMode: typography.subtitleContentMode,
         cycleSubtitleContentMode: () => typography.handleSetSubtitleContentMode(
-            useTypographySettingsStore.getState().subtitleContentMode === 'translation' ? 'romanization' : 'translation',
+            cycleSubtitleContentMode(useTypographySettingsStore.getState().subtitleContentMode),
         ),
         toggleSubtitleOverlayBackground: () => typography.handleToggleSubtitleOverlayBackground(
             !useTypographySettingsStore.getState().subtitleOverlayBackground,
         ),
         playbackEntryView: entryView.playbackEntryView,
         setPlaybackEntryView: entryView.setPlaybackEntryView,
+        librarySuiteOptions: listLibrarySuiteOptions,
+        activeLibrarySuite: getActiveLibrarySuiteId,
+        canChooseLibrarySuite: hasLibrarySuiteChoice,
+        chooseLibrarySuite,
+        // bravais 的透光偏好：与设置分区同一个谓词；值与 setter 都现读 store（面板开着时也会变）。
+        isLibraryWallLookAvailable: isBravaisLibraryActive,
+        libraryWallLook: () => useLibraryWallLookStore.getState().look,
+        setLibraryWallLook: look => useLibraryWallLookStore.getState().setLook(look),
+        libraryWallWindowsPerBlock: () => useLibraryWallLookStore.getState().windowsPerBlock,
+        setLibraryWallWindowsPerBlock: windowsPerBlock => useLibraryWallLookStore.getState().setWindowsPerBlock(windowsPerBlock),
+        toggleLibraryWallStackEdges: () => {
+            const wall = useLibraryWallLookStore.getState();
+            wall.setCollectionStackEdges(!wall.collectionStackEdges);
+        },
+        libraryWallSeamClear: () => useLibraryWallLookStore.getState().seamClear,
+        toggleLibraryWallSeamClear: () => {
+            const wall = useLibraryWallLookStore.getState();
+            wall.setSeamClear(!wall.seamClear);
+        },
+        libraryWallSeamStyle: () => useLibraryWallLookStore.getState().seamStyle,
+        setLibraryWallSeamStyle: style => useLibraryWallLookStore.getState().setSeamStyle(style),
+        toggleLibraryWallBackdropLyrics: () => {
+            const wall = useLibraryWallLookStore.getState();
+            wall.setBackdropLyrics(!wall.backdropLyrics);
+        },
+        toggleLibraryWallBackdropBlur: () => {
+            const wall = useLibraryWallLookStore.getState();
+            wall.setBackdropBlur(!wall.backdropBlur);
+        },
         ponderHintVisibility: ponder.ponderHintVisibility,
         setPonderHintVisibility: ponder.setPonderHintVisibility,
         togglePonderTouchButton: () => {
@@ -130,6 +165,9 @@ export const buildSettingsCommandContext = (
         toggleAlwaysShowMainWindowTitlebar: () => chrome.handleToggleAlwaysShowMainWindowTitlebar(
             !usePlayerChromeSettingsStore.getState().alwaysShowMainWindowTitlebar,
         ),
+        toggleHideFullscreenButton: () => chrome.handleToggleHideFullscreenButton(
+            !usePlayerChromeSettingsStore.getState().hideFullscreenButton,
+        ),
         toggleNativeMacFullscreenButton: () => chrome.handleToggleNativeMacFullscreenButton(
             !usePlayerChromeSettingsStore.getState().useNativeMacFullscreenButton,
         ),
@@ -141,6 +179,12 @@ export const buildSettingsCommandContext = (
         ),
         toggleTranscodeFallback: () => audio.handleToggleTranscodeFallback(
             !useAudioSettingsStore.getState().enableTranscodeFallback,
+        ),
+        togglePlaybackFade: () => audio.handleTogglePlaybackFade(
+            !useAudioSettingsStore.getState().playbackFadeEnabled,
+        ),
+        toggleAutoSkipUnplayable: () => audio.handleToggleAutoSkipUnplayable(
+            !useAudioSettingsStore.getState().autoSkipUnplayable,
         ),
         canAutoScanLocalLibrary: isLocalLibraryAutoScanSupported,
         toggleLocalLibraryAutoScan: () => useLocalLibrarySettingsStore.getState().toggleAutoScan(),
@@ -158,6 +202,16 @@ export const buildSettingsCommandContext = (
         ),
         toggleWallpaperMode: () => desktop.handleToggleWallpaperMode(
             !useDesktopSettingsStore.getState().wallpaperMode,
+        ),
+        toggleCloseToTray: () => desktop.handleToggleCloseToTray(
+            !useDesktopSettingsStore.getState().closeToTray,
+        ),
+        toggleHideRemoteControlTitlebar: () => desktop.handleToggleHideRemoteControlTitlebar(
+            !useDesktopSettingsStore.getState().hideRemoteControlTitlebar,
+        ),
+        unlockRemoteControl: () => desktop.handleToggleRemoteControlClickThrough(false),
+        toggleObsKeepMainWindowAnimation: () => useStageSettingsStore.getState().handleToggleObsKeepMainWindowAnimation(
+            !useStageSettingsStore.getState().obsKeepMainWindowAnimation,
         ),
         toggleWallpaperMacAutohideDock: () => desktop.handleToggleWallpaperMacAutohideDock(
             !useDesktopSettingsStore.getState().wallpaperMacAutohideDock,

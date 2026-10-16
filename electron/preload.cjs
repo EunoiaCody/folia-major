@@ -82,6 +82,11 @@ contextBridge.exposeInMainWorld('electron', {
         ipcRenderer.on('wallpaper-transparent-refused', listener);
         return () => ipcRenderer.removeListener('wallpaper-transparent-refused', listener);
     },
+    onWallpaperEntryRequested: (callback) => {
+        const listener = () => callback();
+        ipcRenderer.on('wallpaper-entry-requested', listener);
+        return () => ipcRenderer.removeListener('wallpaper-entry-requested', listener);
+    },
     onWallpaperInputMonitorRequested: (callback) => {
         const listener = () => callback();
         ipcRenderer.on('wallpaper-input-monitor-requested', listener);
@@ -123,9 +128,12 @@ contextBridge.exposeInMainWorld('electron', {
     clearLocalCoverAssets: () => ipcRenderer.invoke('clear-local-cover-assets'),
     generateTheme: (lyricsText, options) => ipcRenderer.invoke('generate-theme', lyricsText, options),
     segmentLyrics: (lines) => ipcRenderer.invoke('segment-lyrics', lines),
+    testAiConnection: (settings) => ipcRenderer.invoke('ai-test-connection', settings),
     fetchLyricProxy: (url, init) => ipcRenderer.invoke('lyric-proxy-fetch', url, init),
     getNeteasePort: () => ipcRenderer.invoke('get-netease-port'),
     getNeteaseApiStatus: () => ipcRenderer.invoke('get-netease-api-status'),
+    getLoginDiagnostics: (providerId) => ipcRenderer.invoke('get-login-diagnostics', providerId),
+    runLoginSelfCheck: (providerId) => ipcRenderer.invoke('run-login-self-check', providerId),
     restartNeteaseApi: () => ipcRenderer.invoke('restart-netease-api'),
     onNeteaseApiStatusChanged: (callback) => {
         const listener = (_event, status) => callback(status);
@@ -134,6 +142,7 @@ contextBridge.exposeInMainWorld('electron', {
     },
     getKugouApiStatus: () => ipcRenderer.invoke('kugou-api-status'),
     kugouRequest: (operation, params) => ipcRenderer.invoke('kugou-api-request', operation, params),
+    bodianRequest: (operation, params) => ipcRenderer.invoke('bodian-api-request', operation, params),
     getQqPort: () => ipcRenderer.invoke('get-qq-port'),
     getQqApiStatus: () => ipcRenderer.invoke('get-qq-api-status'),
     onQqApiStatusChanged: (callback) => {
@@ -222,6 +231,12 @@ contextBridge.exposeInMainWorld('electron', {
     closeRemoteControl: () => ipcRenderer.invoke('remote-control-close'),
     getRemoteControlAlwaysOnTop: () => ipcRenderer.invoke('remote-control-get-always-on-top'),
     setRemoteControlAlwaysOnTop: (alwaysOnTop) => ipcRenderer.invoke('remote-control-set-always-on-top', alwaysOnTop),
+    getRemoteControlWindowSettings: () => ipcRenderer.invoke('remote-control-get-window-settings'),
+    onRemoteControlWindowSettingsChanged: (callback) => {
+        const listener = (_event, settings) => callback(settings);
+        ipcRenderer.on('remote-control-window-settings-changed', listener);
+        return () => ipcRenderer.removeListener('remote-control-window-settings-changed', listener);
+    },
     publishRemoteControlSnapshot: (snapshot) => ipcRenderer.invoke('remote-control-publish-snapshot', snapshot),
     getRemoteControlSnapshot: () => ipcRenderer.invoke('remote-control-get-snapshot'),
     sendRemoteControlCommand: (command) => ipcRenderer.invoke('remote-control-send-command', command),
@@ -237,10 +252,12 @@ contextBridge.exposeInMainWorld('electron', {
     },
     chooseVideoExportPath: (defaultName, extension, displayName) => ipcRenderer.invoke('video-export-choose-path', defaultName, extension, displayName),
     reportDevicePixelRatio: (ratio) => ipcRenderer.invoke('report-device-pixel-ratio', ratio),
-    getMainWindowCaptureSource: () => ipcRenderer.invoke('video-export-get-main-window-source'),
     prepareVideoExportWindow: (size) => ipcRenderer.invoke('video-export-prepare-window', size),
     restoreVideoExportWindow: () => ipcRenderer.invoke('video-export-restore-window'),
-    writeVideoExportFile: (filePath, data) => ipcRenderer.invoke('video-export-write-file', filePath, data),
+    openVideoExportFile: (filePath) => ipcRenderer.invoke('video-export-open-file', filePath),
+    appendVideoExportChunk: (sessionId, data) => ipcRenderer.invoke('video-export-append-chunk', sessionId, data),
+    finishVideoExportFile: (sessionId) => ipcRenderer.invoke('video-export-finish-file', sessionId),
+    abortVideoExportFile: (sessionId) => ipcRenderer.invoke('video-export-abort-file', sessionId),
     getStageStatus: () => ipcRenderer.invoke('stage-get-status'),
     setStageEnabled: (enabled) => ipcRenderer.invoke('stage-set-enabled', enabled),
     regenerateStageToken: () => ipcRenderer.invoke('stage-regenerate-token'),
@@ -290,6 +307,8 @@ contextBridge.exposeInMainWorld('electron', {
         getFfmpegStatus: () => ipcRenderer.invoke('folia-mods:ffmpeg-status'),
         openModsDirectory: () => ipcRenderer.invoke('folia-mods:open-directory'),
         installModFromZip: (zipPath) => ipcRenderer.invoke('folia-mods:install-zip', zipPath),
+        getModStorageUsage: (modId) => ipcRenderer.invoke('folia-mods:storage-usage', modId),
+        clearModCache: (modId) => ipcRenderer.invoke('folia-mods:clear-cache', modId),
         onModsStateChanged: (callback) => {
             const listener = (_event, mods) => callback(mods);
             ipcRenderer.on('folia-mods:state-changed', listener);

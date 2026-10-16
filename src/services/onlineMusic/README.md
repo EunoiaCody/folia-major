@@ -17,7 +17,14 @@ UI / hooks / stores / app services
   -> src/types/onlineMusic.ts（共享合同）
 ```
 
-当前 registry 注册 `netease`、`kugou` 和 `qq`。Navidrome 是独立的 Subsonic 服务，入口是 `src/services/navidromeService.ts`，不属于 Omni provider。
+当前 registry 注册 `netease`、`kugou`、`qq` 和桌面端的 `bodian`。波点接入状态、接口与剩余验收见
+[`docs/bodian.md`](../../../docs/bodian.md)；支持喜欢与自建歌单歌曲增删，收藏写入尚未实现。Navidrome 是独立的 Subsonic 服务，入口是 `src/services/navidromeService.ts`，不属于 Omni provider。
+
+扫码登录的分工：provider（`neteaseProvider.ts`、`qqProvider.ts`）把后端的响应翻译成 `QrLoginState`，失败时带上后端原文（`message`）、原始返回字段（`detail`，QQ 的失败阶段与原因、上游状态码、退避时长、上一次失败都原样保留）、结构化原因（`reason`：手机上取消、连接被重置、登录设备超限）、冷却（`retryAfterMs`）以及「网络层瞬时失败」（`transient`，没拿到上游回应、二维码仍有效）；要码与生成二维码拿不到 key / 图片时直接抛错，不再交出空值。provider 不持有任何扫码的模块级状态：一轮扫码的步骤、代次、时间线都在 Library Core 的 `core/services/providerLoginSession.ts`。会话在登录失败后自动调用 `omni.runQrLoginSelfCheck` 跑一次主动自检（在手机上取消除外），结论由 `core/model/loginSelfCheckRules.ts` 推出、显示在登录界面上，并和时间线、`omni.getQrLoginDiagnostics` 的 provider 段一起进诊断报告。
+
+provider 段的内容来自主进程的内嵌后端快照（`loginBackendDiagnostics.ts` 排版，`electron/loginBackendIpc.cjs` 的 `get-login-diagnostics`）：应用与系统环境、凭据加密后端、后端状态、每一轮拉起的步骤（耗时、结果、错误原文）、上游连接记录（`electron/networkRecorder.cjs`：连了哪个地址、v4 还是 v6、TCP / TLS 耗时、断在哪一步、Node 错误码），网易另有每次登录请求的记录与扫码身份，QQ 另有包内扫码服务的原始失败（`electron/qqBackend.cjs` 挂在 `failSession` / `failBootstrap` 上的钩子）与 `qq-auth.*` 事件。报告不做隐私脱敏（IP、错误原文都保留），登录界面如实告知报告收集了哪些数据；登录凭据（cookie、token、session）的值从不进入记录。网页版没有主进程，provider 段只有会话状态，自检只检查远端 API 能不能连上（`loginSelfCheck.ts`）。
+
+网易扫码轮询（`/login/qr/check`）在桌面端由主进程替换的 `login_qr_check` 处理（`electron/neteaseApiStartup.cjs` 的 `createLoginQrCheck`）：上游原版请求失败时只回 `404 Not Found`，替换后渲染进程拿到真实的 `{ code, msg }`，例如 `code 502: read ECONNRESET`。扫码的要码与轮询在主进程遇到网络层失败时立即重发一次（`withQrNetworkRetry`）；渲染进程的会话对轮询的瞬时失败再容忍两次。识别连接被重置与网络层失败用 `shared/networkErrorText`（`.mjs` 给渲染进程，`.cjs` 给主进程，内容一致）。主进程在扫码请求被重置后，于下一次要码前换掉扫码身份（`electron/neteaseLoginIdentity.cjs`）：`deviceId` 每次都换；匿名 token `MUSIC_A` 只在 token 文件比加载时更新时才换得到。网易与 QQ 两个内嵌后端的拉起、状态与诊断分别在 `electron/neteaseBackend.cjs` 与 `electron/qqBackend.cjs`，`electron/main.cjs` 只负责装配。
 
 ## Public contract
 
@@ -30,28 +37,33 @@ UI / hooks / stores / app services
 | 手机号登录 | `canPhoneCaptchaLogin`、`sendLoginCaptcha`、`loginByPhoneCaptcha`（provider-explicit） | 仅声明 `supportsPhoneCaptchaLogin` 的 provider 可用（netease）；发送结果归一化 `PhoneCaptchaSendResult`，登录成功已写 provider session cookie |
 | 搜索 | `searchSongs`、`searchProviderSongs` | 普通搜索按 active provider；显式 provider 或跨 provider 用第二个方法 |
 | 用户库 | `getUserPlaylists`、`getProviderUserPlaylists`、`getUserAlbums`、`getLikedSongIds`、`getCloudCollection` | 统一 `OmniCollection` / page 类型，账号快照可先展示再静默刷新 |
-| 推荐 | `getHomeFeed`、`getPersonalFm`、`getDailySongs`、`getRecommendationHistory*`、`dislikeSong` | 首页推荐与历史推荐仍由 Omni 路由 |
+| 推荐 | `getHomeFeed`、`getPersonalFm`、`supportsDailySongs`、`getDailySongs`、`getRecommendationHistory*`、`dislikeSong` | 首页推荐与历史推荐仍由 Omni 路由；日推入口按能力显示，空结果不隐藏入口 |
 | 播放/歌词 | `getSongDetail`、`canPlaySong`、`getAudioSource`、`getLyrics`、`getChorusRanges` | 输出 `OmniAudioSource` / `OmniLyricsResult`；Navidrome 歌词走独立 service |
 | 听歌上报 | `canReportPlayback`、`reportPlayback` | 只有声明 `playbackReports` 的 provider 支持（当前仅网易云）；时长必须是真实累计播放秒数，频控在 `playbackReportGate.ts` |
-| 可用性 | `getSongAvailability`、`getSongReplacement` | 保留 unsupported / unavailable / auth 等 `OmniError` 语义 |
+| 可用性 | `getSongAvailability`、`getSongReplacement` | 静态可用性只由 provider 的显式信号给出，`state: 'unavailable'` 只表示下架（taken-down），权限 / 付费 / 地区限制是 `unknown` + `reason: 'restricted'`；单次播放失败用 `OmniError`（`code` + `details`）加 `OmniPlaybackFailure` 表达，永不回写可用性、预取或缓存 |
 | 解锁 | `getAudioSource(song, quality, { allowUnlock })`（provider adapter 内同平台 unblock）；`src/services/unlockService.ts` 的 `resolveUnlockedAudioSource`（app 级编排：标准 → 同平台 unblock → 跨 provider 替换） | 结果 `ProviderAudioSource.unlocked` 标记来源：`netease-unblock` / `kugou` / `qq`；跨 provider 结果带 `matchedSongKey`，原歌曲播放/收藏身份不被污染 |
 | 集合详情 | `getCollectionTracks`、`getCollectionDetail`、`getAlbumDetail`、`getArtistDetail`、`getArtistSongs`、`getArtistAlbums` | 按 collection 的 `providerId` 路由 |
 | 修改 | `likeSong`、`toggleSongLike`、`getSubscriptionStatus`、`subscribe`、`updateCollectionTracks` | mutation 按歌曲/集合所属 provider 执行并更新 account cache |
 | 外链与引用 | `canResolveCatalogRef`、`resolveCatalogRefs`、`getSongPageUrl` | 共享 `catalogRefs.ts` 的 provider-aware 引用 |
 
-共享类型包括 `UnifiedSong`、`OmniCollection`、`OmniPage`、`OmniLyricsResult`、`OmniAudioSource`、`OmniUser`、`OmniError`、`OmniProviderCapabilities`。调用方不能依赖 provider 的 raw field、numeric id 单独比较或 raw response envelope。
+共享类型包括 `UnifiedSong`、`OmniCollection`、`OmniPage`、`OmniLyricsResult`、`OmniAudioSource`、`OmniUser`、`OmniError`、`OmniErrorDetails`、`OmniPlaybackFailure`、`OmniSongUnavailableReason`、`OmniProviderCapabilities`。调用方不能依赖 provider 的 raw field、numeric id 单独比较或 raw response envelope。
 
 ## Provider and cache files
 
 - `providerRegistry.ts`：注册、查找、按歌曲 `sourceRef` 选择 provider、能力检查。
-- `neteaseProvider.ts`：网易云 adapter，归一化到 Omni contract。`getAudioSource` 在标准授权缺失或仅试听（`freeTrialInfo`）且 `options.allowUnlock` 时，会请求后端 `/song/url/v1?unblock=true`（Electron 内置 `@neteasecloudmusicapienhanced/api` 或 Web 部署的增强版服务原生支持；普通 NeteaseCloudMusicApi 会忽略该参数，自动回到标准结果语义）。解锁音源仍是网易云 CDN 上的完整明文 FLAC/MP3，可直接交给 HTMLAudioElement，无需解密层。auth 额外声明 `supportsPhoneCaptchaLogin`：发送验证码走 `/captcha/sent`，登录走 `/login/cellphone?phone=&captcha=`（与扫码登录一致，登录响应 cookie 写入 provider session）。
+- `neteaseProvider.ts`：网易云 adapter，归一化到 Omni contract。`getAudioSource` 在标准授权缺失或仅试听（`freeTrialInfo`）且 `options.allowUnlock` 时，会请求后端 `/song/url/v1?unblock=true`（Electron 内置 `@neteasecloudmusicapienhanced/api` 或 Web 部署的增强版服务原生支持；普通 NeteaseCloudMusicApi 会忽略该参数，自动回到标准结果语义）。解锁音源仍是网易云 CDN 上的完整明文 FLAC/MP3，可直接交给 HTMLAudioElement，无需解密层。auth 额外声明 `supportsPhoneCaptchaLogin`：发送验证码走 `/captcha/sent`，登录走 `/login/cellphone?phone=&captcha=`（与扫码登录一致，登录响应 cookie 写入 provider session）。`/song/url`、替代版本查询和静态可用性的原始码到 `OmniError` 的映射在 `neteasePlaybackFailure.ts`（纯函数，不依赖 `../netease` 运行时）。
+- `bodianProvider.ts`：波点 adapter；`bodianTransport.ts` 通过受限 IPC 连接 `electron/bodianApiBridge.cjs`。
+  桥接调用固定版本的 `bodian-music-api`，协议实现在独立仓库维护；Folia 负责加密存储与媒体策略。
+  `bodianCatalog.ts` / `bodianLibrary.ts` 处理集合与用户库，`bodianNormalize.ts` 统一数据，凭据不返回 renderer。
+  `bodianErrors.ts` 按固定版本 bodian-music-api@0.1.2 的 message 模板把桥返回的错误归一成 `OmniError`；升级包时要重跑 `bodianErrors.test.ts` 的契约测试。
 - `kugouProvider.ts`：酷狗 adapter；请求细节在 `kugouTransport.ts`，具体接口需结合 `docs/ku-go-api-docs.md` 和 `skills/kugou-provider-alignment`。
-- `qqProvider.ts`：QQ 音乐 adapter；请求与 opaque session 细节在 `qqTransport.ts`，归一化在 `qqNormalize.ts`。集合身份一律用 mid，数字 `albumid` / `singer.id` 会被上游拒收（返回 HTTP 200 但 `code` 非 0，只表现成空白页）。后端由 `VITE_QQ_API_BASE` 指向的私有 QQ API 提供，未配置时该 provider 不可用；填相对路径（`/api/qq`）时走的是本仓库内置的 serverless 入口（`worker/qq.ts` / `api-ts/qq.ts`）。扫码通道由后端 `/login/channels` 声明；打开登录时 UI 会等待能力发现并使用同一份结果决定流程，只宣告一个通道时直接进入单步流程。旧后端没有这条路由时回落到硬编码的 `qq` / `wechat` 两条，暂时性探测失败允许后续重试。
+- `qqProvider.ts`：QQ 音乐 adapter；请求与 opaque session 细节在 `qqTransport.ts`，归一化在 `qqNormalize.ts`，推荐（日推、猜你喜欢、推荐歌单）在 `qqRecommendations.ts`，写入（自建歌单加歌删歌、收藏歌单、收藏状态、红心、收藏专辑）在 `qqMutations.ts`，单曲详情在 `qqSongDetail.ts`。这些路由是 qq-music-api 3.2.0（猜你喜欢、推荐歌单）、3.3.0（日推、歌单写入）与 3.3.1（红心、收藏专辑）新增的：写入走 POST + JSON 正文，只送一次、不重试；只有本人的普通目录（1–199，非「我喜欢」、无系统标记）可以加歌删歌，「我喜欢」走红心。QQ 有日推但没有「不喜欢」，所以每日推荐不给「管理推荐」（`omni.canDislikeCollectionSongs`）。集合身份一律用 mid，数字 `albumid` / `singer.id` 会被上游拒收（返回 HTTP 200 但 `code` 非 0，只表现成空白页）。后端由 `VITE_QQ_API_BASE` 指向的私有 QQ API 提供，未配置时该 provider 不可用；填相对路径（`/api/qq`）时走的是本仓库内置的 serverless 入口（`worker/qq.ts` / `api-ts/qq.ts`）。扫码通道由后端 `/login/channels` 声明；打开登录时 UI 会等待能力发现并使用同一份结果决定流程，只宣告一个通道时直接进入单步流程。旧后端没有这条路由时回落到硬编码的 `qq` / `wechat` 两条，暂时性探测失败允许后续重试。
 - `providerAccountCache.ts`：按 provider 保存用户、集合、点赞 ID、hydration/freshness 快照；刷新失败保留旧快照。
 - `providerStorage.ts`：renderer 的 provider session/account 持久化边界。QQ 这里只保存 opaque `qqmusic_session`；真实 credential 始终由 QQ API 后端持有。Electron 通过主进程的 `safeStorage` 加密仓库跨重启恢复，独立 Node / Docker 后端可用 `QQ_AUTH_SESSION_PATH` 与 `QQ_SESSION_SECRET` 启用加密文件仓库；serverless 形态下 credential 加密在 token 里，服务端不存。送出方式按部署形态分岔：同源 base 用 `X-QQ-Session` header 送裸 token，外部 URL 与 Electron 维持 `?cookie=` 送整串 cookie，两者语义不同不可互换。酷狗 Web transport 仍在这里保存远端 API 请求所需的 session；Electron transport 只保留非敏感 `userid` 提示，`token`、cookie 与 `dfid` 由主进程加密持有，不得复制到 renderer。
 - `resourceCache.ts` / `resourceKeys.ts`：在线资源缓存键和缓存层。当前 kind：`audio`、`lyric`、`cover`、`theme`、`replayGain`。**新增 kind 必须同时在 `src/services/repositories/cacheRepository.ts` 的 `getCacheTableName` 与 `matchesCategory` 里登记前缀**，否则条目会静默落进 `api_cache` 兜底表、不属于任何一个「清除缓存」分类，变成清不掉的孤儿；若该 kind 是按歌曲存一份，还要确认它没有被计进 `mediaCount`（那个数字的语义是「已缓存歌曲数」，会翻倍）。
 - `playbackReportGate.ts`：听歌上报的频控与可用性判断。上报写的是用户真实账号，突发的不可能记录会触发风控，所以这里限制最小间隔与每小时上限、串行发送，并给设置面板和命令面板提供同一个 `isNeteaseScrobbleReady()`。真实播放秒数的计量在 `src/utils/playbackListenTracker.ts`，接线在 `src/hooks/useNeteaseScrobbleReporter.ts`。
 - `songMetadata.ts` / `songAvailability.ts`：歌曲元数据、可播放性和替代歌曲相关共享逻辑。
+- `playbackAttempts.ts`：adapter 内多次音源请求（音质 / 变体 / 备用接口）的记录与汇总，酷狗和 QQ 共用；全部失败时按证据给出一个 `OmniError`，诊断细节留在 `details.attempts`。后端按实测特征给出的「可能」原因（QQ 3.3.0 的 `playback.maybe-membership` / `maybe-region-restricted`）放在 `details.likelyCause`，只挂在 not-playable 结论上，播放侧仍按 unknown 处理、只换一句带「可能」的文案。
 - `unlockService.ts`（app 级，非 provider）：VIP 解锁编排，显式跨 provider。`resolveUnlockedAudioSource` 先标准授权，再同平台 unblock，**再客户端直连酷我**（`src/services/kuwoClient.ts`：JSONP 搜索 + 前端 MD5 sign + fetch 酷我音频直链，用用户自己的 IP 绕开部署服务器 IP 被酷我风控的问题，与 SPlayer bodian 同链路），最后按酷狗→QQ 顺序用 `calculateMatchScoreDetails`（复用 `src/utils/lyrics/matchScore.ts`）语义匹配同曲并取音源；匹配要求标题命中 + 歌手或专辑命中 + 分数 ≥ 75。受 `useSettingsUiStore` 的 `unlockVipSongs` / `unlockUseCrossProviderFallback` 控制，关闭时保持原播放行为。**无版权（grey）歌曲**由 `unlockUnavailableSongs` 独立开关控制：开启时 UI（搜索点播/列表过滤/入队/队列切歌）放行 `privilege.st < 0` 的歌曲，播放链路用同一 `resolveUnlockedAudioSource` 走 unblock → 跨 provider 替代；失败回退原有「替代版本弹窗 / 不可用跳过」流程。UI 与播放层共用 `shouldAutoReplaceUnavailableSong`（`src/services/onlineMusic/songAvailability.ts`）统一判断。
 - `catalogRefs.ts`：歌曲、歌单、专辑、歌手的 provider-aware catalog 引用。
 

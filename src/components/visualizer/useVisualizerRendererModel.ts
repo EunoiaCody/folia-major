@@ -11,6 +11,8 @@ import { useTypographySettingsStore } from '../../stores/useTypographySettingsSt
 import { usePlayerChromeSettingsStore } from '../../stores/usePlayerChromeSettingsStore';
 import { useVisualizerSettingsStore } from '../../stores/useVisualizerSettingsStore';
 import { useVisualizerAssetStore } from '../../stores/useVisualizerAssetStore';
+import { useStageSettingsStore } from '../../stores/useStageSettingsStore';
+import { resolveMainWindowVisualizerMode } from '../../utils/obsBrowserSource';
 import {
     selectDisplayCoverUrl,
     selectDisplayLyrics,
@@ -22,6 +24,8 @@ import { getSongAlbumLabel, getSongArtistLabel } from '../../services/onlineMusi
 import { useVisualizerBackgroundConfig } from './useVisualizerBackgroundConfig';
 import { useVisualizerTunings } from './useVisualizerTunings';
 import { NO_LYRIC_LINES } from '../../utils/lyrics/noLyricLines';
+import { selectLibraryPlayerBackdrop, useLibraryPlayerOcclusionStore } from '../../stores/useLibraryPlayerOcclusionStore';
+import { resolveVisualizerShowText } from '../app/presentation/playerVisualizerBackdrop';
 
 // src/components/visualizer/useVisualizerRendererModel.ts
 //
@@ -39,7 +43,7 @@ type VisualizerRendererModelDeps = {
     subtitleTheme: Theme;
     /** The displayed song's id; visualizers infer "song changed" from it. */
     seed: string | number | undefined;
-    /** Rendering into the OBS browser source instead of the window: freeze to a still. */
+    /** Rendering into the OBS browser source instead of the window: freeze to a still (unless the user keeps the animation). */
     isObsBrowserSourceRendering: boolean;
     shouldPauseVisualizerBackground: boolean;
     hideTranslationSubtitle: boolean;
@@ -65,10 +69,13 @@ export const useVisualizerRendererModel = ({
     const onPlayerPanelGuideHotspotChange = useAppChromeStore(state => state.setIsPlayerPanelGuideHotspotActive);
     const isSettingsModalOpen = useSettingsModalStore(state => state.settingsModalState.isOpen);
     const isSettingsSubviewOpen = useSettingsModalStore(state => state.isSubSettingsViewOpen);
+    // 首页墙后面透出来的 visualizer 要不要画歌词（bravais「墙后的画面」，stage 经契约报告；没有 stage 时为 false）。
+    const backdropLyrics = useLibraryPlayerOcclusionStore(state => selectLibraryPlayerBackdrop(state).lyrics);
     const isDaylight = useThemeSettingsStore(state => state.isDaylight);
     const staticMode = useThemeSettingsStore(state => state.staticMode);
     const alwaysShowPlayerBackButton = usePlayerChromeSettingsStore(state => state.alwaysShowPlayerBackButton);
     const visualizerMode = useVisualizerSettingsStore(state => state.visualizerMode);
+    const obsKeepMainWindowAnimation = useStageSettingsStore(state => state.obsKeepMainWindowAnimation);
     const visualizerOpacity = useVisualizerSettingsStore(state => state.visualizerOpacity);
     const disableGeometricBackground = useVisualizerSettingsStore(state => state.disableVisualizerGeometricBackground);
     const onMonetTuningChange = useVisualizerSettingsStore(state => state.handleSetMonetTuning);
@@ -118,7 +125,7 @@ export const useVisualizerRendererModel = ({
         },
     }), [backgroundConfig, isPlayerPageTransparent, disableGeometricBackground, isSettingsSubviewOpen]);
 
-    const mode: VisualizerMode = isObsBrowserSourceRendering ? 'still' : visualizerMode;
+    const mode: VisualizerMode = resolveMainWindowVisualizerMode(visualizerMode, isObsBrowserSourceRendering, obsKeepMainWindowAnimation);
 
     return {
         mode,
@@ -134,7 +141,7 @@ export const useVisualizerRendererModel = ({
         songArtist,
         songAlbum,
         coverUrl: displayCoverUrl,
-        showText: currentView === 'player' && !isSettingsModalOpen,
+        showText: resolveVisualizerShowText({ currentView, isSettingsModalOpen, isPanelOpen, backdropLyrics }),
         seed,
         staticMode,
         backgroundStaticMode: shouldPauseVisualizerBackground

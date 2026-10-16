@@ -12,6 +12,7 @@ import {
     type DualTheme,
     type Theme,
 } from '../types';
+import { normalizeLumiereTuning } from './lumiereTuning';
 
 // src/utils/appearanceCodec.ts
 // The shareable appearance config codec: theme + visual settings <-> the minified `folia-theme://`
@@ -459,6 +460,39 @@ const decompressTempera = (o: any): any => ({
     postProcessLensDistortion: o.ppld !== undefined ? o.ppld : DEFAULT_TEMPERA_TUNING.postProcessLensDistortion,
 });
 
+// 绘光：短键只在短码里出现；解压后统一走 normalizeLumiereTuning 钳制和补默认值。
+const LUMIERE_SHORT_KEYS = {
+    lightIntensity: 'li',
+    audioResponse: 'ar',
+    fogDensity: 'fd',
+    darkField: 'df',
+    moteAmount: 'ma',
+    bloom: 'bl',
+    textBloom: 'tb',
+    unlitOpacity: 'uo',
+    windowNeighbors: 'wn',
+    decay: 'dc',
+    echo: 'ec',
+    fogOctaves: 'fo',
+    lineArt: 'la',
+    frontBokeh: 'fb',
+    trails: 'tr',
+    hideTrails: 'ht',
+    seamlessTransitions: 'st',
+    overlayFrame: 'of',
+    textOnly: 'txo',
+    keywordColors: 'kc',
+    themeIcons: 'thi',
+    themeColorMix: 'tcm',
+    renderQuality: 'rq',
+} as const;
+const compressLumiere = (t: any): any => Object.fromEntries(
+    Object.entries(LUMIERE_SHORT_KEYS).map(([key, short]) => [short, t[key]]),
+);
+const decompressLumiere = (o: any) => normalizeLumiereTuning(Object.fromEntries(
+    Object.entries(LUMIERE_SHORT_KEYS).map(([key, short]) => [key, o?.[short]]),
+));
+
 export const compressConfig = (config: any): string => {
     const minified: any = {};
     if (config.theme) {
@@ -513,6 +547,7 @@ export const compressConfig = (config: any): string => {
     if (config.pendoloTuning) minified.pdt = compressPendolo(config.pendoloTuning);
     if (config.sonnetTuning) minified.snt = compressSonnet(config.sonnetTuning);
     if (config.temperaTuning) minified.tmp = compressTempera(config.temperaTuning);
+    if (config.lumiereTuning) minified.lmt = compressLumiere(config.lumiereTuning);
     // Folium param values are already plain JSON keyed by scope; stored as-is.
     if (config.foliumParams) minified.fp = config.foliumParams;
     if (config.urlBackgroundList) minified.ubl = config.urlBackgroundList;
@@ -524,6 +559,11 @@ export const compressConfig = (config: any): string => {
     if (config.stageTrackPillMode !== undefined) minified.stp = config.stageTrackPillMode;
     if (config.stageTrackPillTimeoutSec !== undefined) minified.stpt = config.stageTrackPillTimeoutSec;
     if (config.stageTrackPillOnHome !== undefined) minified.stph = config.stageTrackPillOnHome;
+    if (config.libraryWallStackEdges !== undefined) minified.lwse = config.libraryWallStackEdges;
+    if (config.libraryWallSeamClear !== undefined) minified.lwsc = config.libraryWallSeamClear;
+    if (config.libraryWallSeamStyle !== undefined) minified.lwss = config.libraryWallSeamStyle;
+    if (config.libraryWallBackdropLyrics !== undefined) minified.lwbl = config.libraryWallBackdropLyrics;
+    if (config.libraryWallBackdropBlur !== undefined) minified.lwbb = config.libraryWallBackdropBlur;
 
     const jsonStr = JSON.stringify(minified);
     const bytes = new TextEncoder().encode(jsonStr);
@@ -584,7 +624,13 @@ export const decompressConfig = (str: string): any => {
         // the long-name branch, where none of them is a valid key.
         || parsed.stp !== undefined
         || parsed.stpt !== undefined
-        || parsed.stph !== undefined;
+        || parsed.stph !== undefined
+        // The bravais wall's collection stack edges, info strip and backdrop, for the same reason.
+        || parsed.lwse !== undefined
+        || parsed.lwsc !== undefined
+        || parsed.lwss !== undefined
+        || parsed.lwbl !== undefined
+        || parsed.lwbb !== undefined;
     if (isMinified) {
         const decompressed: any = {};
         if (parsed.t) {
@@ -639,6 +685,7 @@ export const decompressConfig = (str: string): any => {
         if (parsed.pdt) decompressed.pendoloTuning = decompressPendolo(parsed.pdt);
         if (parsed.snt) decompressed.sonnetTuning = decompressSonnet(parsed.snt);
         if (parsed.tmp) decompressed.temperaTuning = decompressTempera(parsed.tmp);
+        if (parsed.lmt) decompressed.lumiereTuning = decompressLumiere(parsed.lmt);
         if (parsed.fp) decompressed.foliumParams = parsed.fp;
         if (parsed.ubl) decompressed.urlBackgroundList = parsed.ubl;
         if (parsed.ubid) decompressed.urlBackgroundSelectedId = parsed.ubid;
@@ -649,6 +696,11 @@ export const decompressConfig = (str: string): any => {
         if (parsed.stp !== undefined) decompressed.stageTrackPillMode = parsed.stp;
         if (parsed.stpt !== undefined) decompressed.stageTrackPillTimeoutSec = parsed.stpt;
         if (parsed.stph !== undefined) decompressed.stageTrackPillOnHome = parsed.stph;
+        if (parsed.lwse !== undefined) decompressed.libraryWallStackEdges = parsed.lwse;
+        if (parsed.lwsc !== undefined) decompressed.libraryWallSeamClear = parsed.lwsc;
+        if (parsed.lwss !== undefined) decompressed.libraryWallSeamStyle = parsed.lwss;
+        if (parsed.lwbl !== undefined) decompressed.libraryWallBackdropLyrics = parsed.lwbl;
+        if (parsed.lwbb !== undefined) decompressed.libraryWallBackdropBlur = parsed.lwbb;
 
         return decompressed;
     } else {
@@ -663,10 +715,12 @@ export const decompressConfig = (str: string): any => {
             'subtitleFontFallbackFamilies', 'visualizerTunings', 'classicTuning',
             'cadenzaTuning', 'partitaTuning', 'fumeTuning', 'claddaghTuning', 'cappellaTuning',
             'tiltTuning', 'dioramaTuning', 'monetBackgroundTuning', 'nomandBackgroundTuning', 'latentBackgroundTuning', 'soraBackgroundTuning', 'monetTuning',
-            'pendoloTuning', 'sonnetTuning', 'temperaTuning', 'foliumParams',
+            'pendoloTuning', 'sonnetTuning', 'temperaTuning', 'lumiereTuning', 'foliumParams',
             'urlBackgroundList', 'urlBackgroundSelectedId',
             'songThemeAutoSwitchEnabled', 'songThemeAutoGenerateEnabled', 'themeGenerationSource', 'followSystemTheme',
             'stageTrackPillMode', 'stageTrackPillTimeoutSec', 'stageTrackPillOnHome',
+            'libraryWallStackEdges',
+            'libraryWallSeamClear', 'libraryWallSeamStyle', 'libraryWallBackdropLyrics', 'libraryWallBackdropBlur',
         ];
         const hasValidKey = validKeys.some(k => parsed[k] !== undefined);
         if (!hasValidKey) {

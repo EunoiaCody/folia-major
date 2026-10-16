@@ -28,6 +28,7 @@ import NowPlayingCardSettingsSection from './NowPlayingCardSettingsSection';
 import { isThemeGenerationSource, type ThemeGenerationSource } from '../../../services/themePreferences';
 import { SettingsAnchor } from './navigation/SettingsAnchorContext';
 import SettingsSectionHeading from './navigation/SettingsSectionHeading';
+import { settingsDividerClassFor } from './settingsCardClasses';
 import { setStatusMessage } from '../../../stores/useStatusMessageStore';
 import { useVisualizerSettingsStore } from '../../../stores/useVisualizerSettingsStore';
 import { useVisualizerAssetStore } from '../../../stores/useVisualizerAssetStore';
@@ -35,6 +36,8 @@ import { useTypographySettingsStore } from '../../../stores/useTypographySetting
 import { usePlayerChromeSettingsStore } from '../../../stores/usePlayerChromeSettingsStore';
 import { useThemeSettingsStore } from '../../../stores/useThemeSettingsStore';
 import { useStageSettingsStore } from '../../../stores/useStageSettingsStore';
+import { useLibraryWallLookStore } from '../../../stores/useLibraryWallLookStore';
+import { isLibraryWallSeamStyle } from '../../../utils/libraryWallSeamStyle';
 
 // src/components/modal/settings/AppearanceSettingsSubview.tsx
 // Visual settings subview for theme presets, lyric renderer entry, layout settings, and configurations import/export.
@@ -232,6 +235,7 @@ const AppearanceSettingsSubview: React.FC<AppearanceSettingsSubviewProps> = ({
         pendoloTuning: state.pendoloTuning,
         sonnetTuning: state.sonnetTuning,
         temperaTuning: state.temperaTuning,
+        lumiereTuning: state.lumiereTuning,
         urlBackgroundList: state.urlBackgroundList,
         urlBackgroundSelectedId: state.urlBackgroundSelectedId,
         handleSetVisualizerMode: state.handleSetVisualizerMode,
@@ -257,6 +261,7 @@ const AppearanceSettingsSubview: React.FC<AppearanceSettingsSubviewProps> = ({
         handleSetPendoloTuning: state.handleSetPendoloTuning,
         handleSetSonnetTuning: state.handleSetSonnetTuning,
         handleSetTemperaTuning: state.handleSetTemperaTuning,
+        handleSetLumiereTuning: state.handleSetLumiereTuning,
         handleAddUrlBackgroundItem: state.handleAddUrlBackgroundItem,
         handleUpdateUrlBackgroundItem: state.handleUpdateUrlBackgroundItem,
         handleSetUrlBackgroundList: state.handleSetUrlBackgroundList,
@@ -425,6 +430,7 @@ const AppearanceSettingsSubview: React.FC<AppearanceSettingsSubviewProps> = ({
             if (has('subtitleContentMode')
                 && (config.subtitleContentMode === 'translation'
                     || config.subtitleContentMode === 'romanization'
+                    || config.subtitleContentMode === 'both'
                     || config.subtitleContentMode === 'none')) {
                 storeTypographySettings.handleSetSubtitleContentMode(config.subtitleContentMode);
             }
@@ -521,6 +527,7 @@ const AppearanceSettingsSubview: React.FC<AppearanceSettingsSubviewProps> = ({
                 if (has('pendoloTuning') && config.pendoloTuning) storeVisualizer.handleSetPendoloTuning(config.pendoloTuning);
                 if (has('sonnetTuning') && config.sonnetTuning) storeVisualizer.handleSetSonnetTuning(config.sonnetTuning);
                 if (has('temperaTuning') && config.temperaTuning) storeVisualizer.handleSetTemperaTuning(config.temperaTuning);
+                if (has('lumiereTuning') && config.lumiereTuning) storeVisualizer.handleSetLumiereTuning(config.lumiereTuning);
             }
 
             if (has('monetBackgroundTuning') && config.monetBackgroundTuning) {
@@ -590,6 +597,23 @@ const AppearanceSettingsSubview: React.FC<AppearanceSettingsSubviewProps> = ({
             if (has('stageTrackPillOnHome')) {
                 onToggleStageTrackPillOnHome(Boolean(config.stageTrackPillOnHome));
             }
+            // bravais 的集合叠页边（界面设置的「Bravais 墙面」分组里那个开关的同一个 setter）。
+            if (has('libraryWallStackEdges')) {
+                useLibraryWallLookStore.getState().setCollectionStackEdges(Boolean(config.libraryWallStackEdges));
+            }
+            // 同一分组里信息条的材质与墙后的画面。样式只认已知的预设（与导入计划的 truthy 守卫一致）。
+            if (has('libraryWallSeamClear')) {
+                useLibraryWallLookStore.getState().setSeamClear(Boolean(config.libraryWallSeamClear));
+            }
+            if (has('libraryWallSeamStyle') && isLibraryWallSeamStyle(config.libraryWallSeamStyle)) {
+                useLibraryWallLookStore.getState().setSeamStyle(config.libraryWallSeamStyle);
+            }
+            if (has('libraryWallBackdropLyrics')) {
+                useLibraryWallLookStore.getState().setBackdropLyrics(Boolean(config.libraryWallBackdropLyrics));
+            }
+            if (has('libraryWallBackdropBlur')) {
+                useLibraryWallLookStore.getState().setBackdropBlur(Boolean(config.libraryWallBackdropBlur));
+            }
 
             setStatusMessage({ type: 'success', text: t('options.importSuccess') });
             setImportText('');
@@ -608,7 +632,7 @@ const AppearanceSettingsSubview: React.FC<AppearanceSettingsSubviewProps> = ({
                 <SettingsSectionHeading icon={Monitor} label={t('options.lyricsRenderer')} />
                 <div className="space-y-3">
                     {storePlayerChromeSettings.enablePlayerPageNativeBlur && (
-                        <div className="flex items-center gap-2.5 rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-xs text-amber-500 dark:text-amber-400">
+                        <div className={`flex items-center gap-2.5 rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-xs ${isDaylight ? 'text-amber-600' : 'text-amber-400'}`}>
                             <AlertTriangle size={16} className="shrink-0 text-amber-500" />
                             <span>{t('options.nativeBlurBackgroundNotice')}</span>
                         </div>
@@ -790,7 +814,7 @@ const AppearanceSettingsSubview: React.FC<AppearanceSettingsSubviewProps> = ({
                             <div className="flex items-start gap-2.5 rounded-lg border border-amber-500/35 bg-amber-500/10 px-3 py-2.5 text-xs">
                                 <KeyRound size={15} className="mt-0.5 shrink-0 text-amber-500" />
                                 <div className="space-y-1.5">
-                                    <p className="leading-relaxed text-amber-600 dark:text-amber-400">
+                                    <p className={`leading-relaxed ${isDaylight ? 'text-amber-600' : 'text-amber-400'}`}>
                                         {t('options.themeGenerationSourceAiUnavailable')}
                                     </p>
                                     <button
@@ -935,7 +959,7 @@ const AppearanceSettingsSubview: React.FC<AppearanceSettingsSubviewProps> = ({
                 </div>
             </SettingsAnchor>
 
-            {/* Section 5: Queue collage */}
+            {/* Section 5: Tile wall appearance (queue collage + bravais library wall) */}
             <SettingsAnchor anchorId="latticeSettings" label={t('options.latticeSettings')}>
                 <SettingsSectionHeading icon={PanelsTopLeft} label={t('options.latticeSettings')} />
                 <LatticeSettingsSection
@@ -951,6 +975,7 @@ const AppearanceSettingsSubview: React.FC<AppearanceSettingsSubviewProps> = ({
                 <SettingsSectionHeading icon={Images} label={t('options.gridViewCardSettings')} />
                 <GridViewSettingsSection
                     settingsCardClass={settingsCardClass}
+                    settingsDividerClass={settingsDividerClassFor(isDaylight)}
                     toggleOffBackgroundClass={toggleOffBackgroundClass}
                     theme={theme}
                 />
@@ -961,6 +986,7 @@ const AppearanceSettingsSubview: React.FC<AppearanceSettingsSubviewProps> = ({
                 <SettingsSectionHeading icon={Film} label={t('options.videoLayerSettings')} />
                 <VideoLayerSettingsSection
                     settingsCardClass={settingsCardClass}
+                    settingsDividerClass={settingsDividerClassFor(isDaylight)}
                     toggleOffBackgroundClass={toggleOffBackgroundClass}
                     getAccentOptionStyle={getAccentOptionStyle}
                     theme={theme}

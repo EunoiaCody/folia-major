@@ -51,9 +51,13 @@ const PlaybackSettingsSubview: React.FC<PlaybackSettingsSubviewProps> = ({
         audioOutputDeviceId,
         enableTranscodeFallback,
         neteaseScrobbleEnabled,
+        playbackFadeEnabled,
+        autoSkipUnplayable,
         queueAddBehavior,
         onToggleTranscodeFallback,
         onToggleNeteaseScrobble,
+        onTogglePlaybackFade,
+        onToggleAutoSkipUnplayable,
         onQueueAddBehaviorChange,
         unlockVipSongs,
         unlockUnavailableSongs,
@@ -65,9 +69,13 @@ const PlaybackSettingsSubview: React.FC<PlaybackSettingsSubviewProps> = ({
         audioOutputDeviceId: state.audioOutputDeviceId,
         enableTranscodeFallback: state.enableTranscodeFallback,
         neteaseScrobbleEnabled: state.neteaseScrobbleEnabled,
+        playbackFadeEnabled: state.playbackFadeEnabled,
+        autoSkipUnplayable: state.autoSkipUnplayable,
         queueAddBehavior: state.queueAddBehavior,
         onToggleTranscodeFallback: state.handleToggleTranscodeFallback,
         onToggleNeteaseScrobble: state.handleToggleNeteaseScrobble,
+        onTogglePlaybackFade: state.handleTogglePlaybackFade,
+        onToggleAutoSkipUnplayable: state.handleToggleAutoSkipUnplayable,
         onQueueAddBehaviorChange: state.handleSetQueueAddBehavior,
         unlockVipSongs: state.unlockVipSongs,
         unlockUnavailableSongs: state.unlockUnavailableSongs,
@@ -226,6 +234,17 @@ const PlaybackSettingsSubview: React.FC<PlaybackSettingsSubviewProps> = ({
                                 </button>
                             );
                         })}
+                    </div>
+                    <div className="flex items-start justify-between gap-3 border-t border-current/10 pt-4">
+                        <div className="space-y-1">
+                            <div className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
+                                {t('options.autoSkipUnplayable')}
+                            </div>
+                            <div className="text-[11px] opacity-50 max-w-[420px]" style={{ color: 'var(--text-secondary)' }}>
+                                {t('options.autoSkipUnplayableDesc')}
+                            </div>
+                        </div>
+                        {renderToggle(autoSkipUnplayable, () => onToggleAutoSkipUnplayable(!autoSkipUnplayable))}
                     </div>
                 </div>
             </SettingsAnchor>
@@ -461,6 +480,17 @@ const PlaybackSettingsSubview: React.FC<PlaybackSettingsSubviewProps> = ({
             <SettingsAnchor anchorId="audioOutputSettings" label={t('options.audioOutputSettings')}>
                 <SettingsSectionHeading icon={Monitor} label={t('options.audioOutputSettings')} />
                 <div className={`p-4 rounded-xl border space-y-4 ${settingsCardClass}`}>
+                    <div className="flex items-start justify-between gap-3 border-b border-current/10 pb-4">
+                        <div className="space-y-1">
+                            <div className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
+                                {t('options.playbackFade')}
+                            </div>
+                            <div className="text-[11px] opacity-50 max-w-[420px]" style={{ color: 'var(--text-secondary)' }}>
+                                {t('options.playbackFadeDesc')}
+                            </div>
+                        </div>
+                        {renderToggle(playbackFadeEnabled, () => onTogglePlaybackFade(!playbackFadeEnabled))}
+                    </div>
                     {window.electron?.requestTranscodeFallback && (
                         <div className="flex items-start justify-between gap-3 border-b border-current/10 pb-4">
                             <div className="space-y-1">
@@ -508,6 +538,7 @@ const PlaybackSettingsSubview: React.FC<PlaybackSettingsSubviewProps> = ({
                                 }}
                                 options={audioOutputOptions}
                                 onOpen={ensureAudioOutputDevicesLoaded}
+                                ariaLabel={t('options.audioOutputDevice')}
                                 disabled={isSelectingAudioOutput}
                                 isDaylight={isDaylight}
                                 theme={theme}

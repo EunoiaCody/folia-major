@@ -12,7 +12,7 @@ import id from '../../../src/i18n/locales/in';
 const echo = (key: string) => key;
 
 const ALL_SECTIONS: SettingsSectionId[] = [
-    'appearance', 'general', 'playback', 'interaction', 'integration', 'storage', 'desktop', 'lab', 'developer',
+    'appearance', 'general', 'playback', 'interaction', 'integration', 'storage', 'desktop', 'graphics', 'mods', 'lab', 'developer',
 ];
 
 const lookup = (bundle: Record<string, unknown>, key: string): unknown => (
@@ -32,7 +32,8 @@ describe('settingsNavModel', () => {
         const ids = flattenSettingsNavItems(groups).map(item => item.id);
 
         expect(ids).not.toContain('desktop');
-        expect(ids).toHaveLength(ALL_SECTIONS.length - 1);
+        expect(ids).not.toContain('mods');
+        expect(ids).toHaveLength(ALL_SECTIONS.length - 2);
         expect(groups.every(group => group.items.length > 0)).toBe(true);
     });
 
@@ -49,11 +50,35 @@ describe('settingsNavModel', () => {
     });
 
     it('expands every declared anchor under its owning section', () => {
-        const items = flattenSettingsNavItems(buildSettingsNavGroups(echo, { isElectron: true }));
+        const items = flattenSettingsNavItems(buildSettingsNavGroups(echo, { isElectron: true, hasLibrarySuiteChoice: true, isBravaisSuiteActive: true }));
         const rendered = items.flatMap(item => item.anchors.map(anchor => [anchor.id, item.id]));
         const declared = Object.entries(SETTINGS_ANCHOR_DEFINITIONS).map(([id, definition]) => [id, definition.section]);
 
         expect(rendered).toEqual(declared);
+    });
+
+    it('lists the library suite anchor only when there is a suite to choose (its section renders nothing otherwise)', () => {
+        const anchorsOf = (hasLibrarySuiteChoice: boolean) => findSettingsNavItem(
+            buildSettingsNavGroups(echo, { isElectron: false, hasLibrarySuiteChoice }),
+            'general',
+        )?.anchors.map(anchor => anchor.id);
+
+        expect(anchorsOf(true)).toContain('librarySuite');
+        expect(anchorsOf(false)).not.toContain('librarySuite');
+        expect(anchorsOf(false)).toContain('playbackEntryView');
+    });
+
+    it('lists the Bravais group only while bravais is the active suite (its section renders nothing otherwise)', () => {
+        const anchorsOf = (isBravaisSuiteActive: boolean) => findSettingsNavItem(
+            buildSettingsNavGroups(echo, { isElectron: false, hasLibrarySuiteChoice: true, isBravaisSuiteActive }),
+            'general',
+        )?.anchors.map(anchor => anchor.id);
+
+        expect(anchorsOf(true)).toEqual(expect.arrayContaining(['librarySuite', 'bravaisSettings']));
+        // 紧跟在「资料库界面」后面（与界面设置里的渲染顺序一致）。
+        expect(anchorsOf(true)!.indexOf('bravaisSettings')).toBe(anchorsOf(true)!.indexOf('librarySuite') + 1);
+        expect(anchorsOf(false)).toContain('librarySuite');
+        expect(anchorsOf(false)).not.toContain('bravaisSettings');
     });
 
     it.each([['en', en], ['zh-CN', zhCN], ['in', id]] as const)('has every label and description key in %s', (_name, bundle) => {

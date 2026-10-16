@@ -1,3 +1,4 @@
+import { RemoteActionButtons } from './RemoteActionButtons';
 import React, { useEffect, useMemo, useState, useRef } from 'react';
 import { ChevronLeft, Heart, Lock, LockOpen, Pause, Pin, PinOff, Play, Repeat, Repeat1, RepeatOff, SkipBack, SkipForward, Video, MirrorRectangular, X, Check, Sliders, Palette } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -18,6 +19,11 @@ import type { VideoExportPresetValues, VideoExportStartMode } from '../../types/
 import { useRemoteCoverArt } from './useRemoteCoverArt';
 import { useRemoteTrackHandoff } from './useRemoteTrackHandoff';
 import { useTranslation } from 'react-i18next';
+import {
+    DEFAULT_REMOTE_WINDOW_PRESENTATION,
+    shouldRevealRemoteTitlebar,
+} from './remoteTitlebarReveal';
+import type { RemoteWindowPresentation } from './remoteTitlebarReveal';
 
 // src/components/remote/RemoteControlApp.tsx
 // Electron-only companion window for controlling the single real player instance.
@@ -35,7 +41,6 @@ const formatTime = (seconds: number) => {
 const REMOTE_CONTROL_DOCUMENT_TITLE = 'Folia Remote';
 const REMOTE_VIDEO_EXPORT_PRESET_VALUES_STORAGE_KEY = 'remote_video_export_preset_values';
 const REMOTE_BACKGROUND_MODE_STORAGE_KEY = 'remote_background_mode';
-const REMOTE_TITLEBAR_REVEAL_THRESHOLD = 44;
 
 type BackgroundMode = 'default' | 'cover' | 'transparent';
 
@@ -129,6 +134,7 @@ const RemoteControlApp: React.FC = () => {
     const [alwaysOnTop, setAlwaysOnTop] = useState(false);
     const [windowControlsRevealed, setWindowControlsRevealed] = useState(false);
     const [isHovered, setIsHovered] = useState(false);
+    const [windowPresentation, setWindowPresentation] = useState<RemoteWindowPresentation>(DEFAULT_REMOTE_WINDOW_PRESENTATION);
     const [hoverNavSide, setHoverNavSide] = useState<'prev' | 'next' | null>(null);
     const [showLyricsOverlay, setShowLyricsOverlay] = useState(false);
     const isDraggingRef = useRef(false);
@@ -169,8 +175,39 @@ const RemoteControlApp: React.FC = () => {
     }, []);
 
     useEffect(() => {
+        let mounted = true;
+        void window.electron?.getRemoteControlWindowSettings?.().then(settings => {
+            if (mounted && settings) {
+                setWindowPresentation(prev => (
+                    prev.hideTitlebar === settings.hideTitlebar && prev.clickThrough === settings.clickThrough ? prev : settings
+                ));
+            }
+        });
+        const unsubscribe = window.electron?.onRemoteControlWindowSettingsChanged?.(settings => {
+            setWindowPresentation(prev => (
+                prev.hideTitlebar === settings.hideTitlebar && prev.clickThrough === settings.clickThrough ? prev : settings
+            ));
+        });
+        return () => {
+            mounted = false;
+            unsubscribe?.();
+        };
+    }, []);
+
+    useEffect(() => {
+        // A click-through window stops receiving mouse events, so mouseleave may never arrive: drop hover state explicitly.
+        if (windowPresentation.hideTitlebar || windowPresentation.clickThrough) {
+            setWindowControlsRevealed(false);
+        }
+        if (windowPresentation.clickThrough) {
+            setIsHovered(false);
+            setHoverNavSide(null);
+        }
+    }, [windowPresentation]);
+
+    useEffect(() => {
         const handleMouseMove = (event: MouseEvent) => {
-            const nextRevealed = event.clientY <= REMOTE_TITLEBAR_REVEAL_THRESHOLD;
+            const nextRevealed = shouldRevealRemoteTitlebar(event.clientY, windowPresentation);
             setWindowControlsRevealed(prev => (prev === nextRevealed ? prev : nextRevealed));
         };
         const handleMouseLeave = () => setWindowControlsRevealed(false);
@@ -182,7 +219,7 @@ const RemoteControlApp: React.FC = () => {
             window.removeEventListener('mousemove', handleMouseMove);
             window.removeEventListener('mouseleave', handleMouseLeave);
         };
-    }, []);
+    }, [windowPresentation]);
 
     useEffect(() => {
         window.localStorage.setItem(REMOTE_BACKGROUND_MODE_STORAGE_KEY, backgroundMode);
@@ -1007,6 +1044,10 @@ const RemoteControlApp: React.FC = () => {
                         </div>
                     </div>
                 </div>
+
+                <RemoteActionButtons snapshot={snapshot.remoteActions} isDaylight={isDaylight} sendCommand={sendCommand}
+                    classes={{ base: secondaryButtonBase, idle: secondaryIdleClass, active: secondaryActiveClass, alert: secondaryAlertClass }}
+                    visible={activePanel === 'playback' && !presetSelectorOpen} />
 
                 {/* Root-Level Preset Selector Overlay Modal */}
                 <AnimatePresence>

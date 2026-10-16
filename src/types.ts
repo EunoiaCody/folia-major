@@ -1,3 +1,4 @@
+import type { LucideIcon } from 'lucide-react';
 import type { LineRenderHints } from './utils/lyrics/renderHints';
 import type { MediaId, PlaybackSourceRef, ProviderCatalogRef } from './types/onlineMusic';
 
@@ -42,7 +43,9 @@ export interface LyricBackgroundVocal {
   alternateTexts?: LyricAlternateText[];
 }
 
-export type SubtitleContentMode = 'translation' | 'romanization' | 'none';
+// 'both' stacks romanization above translation; only the shared bottom subtitle overlay renders both rows.
+// Modes that lay translation out inside their own lyric layout (Monet, Pendolo, Lattice, Still) fall back to translation only.
+export type SubtitleContentMode = 'translation' | 'romanization' | 'both' | 'none';
 
 export interface LyricAgent {
   id: string;
@@ -68,8 +71,12 @@ export interface Line {
   isChorus?: boolean;
   chorusEffect?: 'bars' | 'circles' | 'beams';
   // User-saved fine word boundaries for fullText, baked in upstream by the lyric setter.
-  // join('') must equal fullText. When present it wins over Intl.Segmenter word segmentation.
+  // join('') must equal fullText. When present it wins over every automatic segmentation.
   wordSegments?: string[];
+  // icu-folia's automatic word boundaries for fullText (utils/lyrics/icuFolia), baked in by the
+  // lyric setter once its engines have loaded. Used when there is no wordSegments; absent until
+  // then, and the line falls back to plain Intl.Segmenter.
+  autoWordSegments?: string[];
 }
 
 export interface LyricData {
@@ -692,6 +699,95 @@ export const DEFAULT_TEMPERA_TUNING: TemperaTuning = {
   postProcessLensDistortion: 0.3,
 };
 
+/**
+ * 绘光画质档位。`full` 全分辨率；`balanced` / `low` 把光场与辉光降采样、烟雾倍频数封顶，用于省电。
+ */
+export type LumiereRenderQuality = 'full' | 'balanced' | 'low';
+
+export interface LumiereTuning {
+  /** 光强倍率, 0.3..2. */
+  lightIntensity: number;
+  /** 随音乐变亮, 0..2 (0 = 不随音乐变). */
+  audioResponse: number;
+  /** 烟雾浓度, 0..2. */
+  fogDensity: number;
+  /**
+   * 暗场强度, 0..1：光后面铺一层主题背景色压暗的底，压住 folia 的共享背景（0 = 共享背景原样透出）。
+   * 浅色主题保底 0.94（绘光始终在暗场里）。
+   */
+  darkField: number;
+  /** 浮尘数量, 0..2. */
+  moteAmount: number;
+  /** 图形辉光, 0..2. */
+  bloom: number;
+  /** 文字辉光, 0..2. */
+  textBloom: number;
+  /** 未唱字透明度, 0.05..0.6. */
+  unlitOpacity: number;
+  /** 邻行：1 = 上一行 + 当前行，2 = 上一行 + 当前行 + 下一行. */
+  windowNeighbors: 1 | 2;
+  /** 崩解强度, 0..2. */
+  decay: number;
+  /** 背景歌词亮度, 0..2 (0 = 关). */
+  echo: number;
+  /** 烟雾细节（倍频数）, integer 2..6. */
+  fogOctaves: number;
+  /** 线稿. */
+  lineArt: boolean;
+  /** 前景散景. */
+  frontBokeh: boolean;
+  /** 所有换位都走轨迹线. */
+  trails: boolean;
+  /** 隐藏所有歌词换位的轨迹线，保留字的飞行与轨迹过渡. */
+  hideTrails: boolean;
+  /**
+   * 轨迹过渡：段落之间也和段内换镜头一样在同一个光场里交接（整首歌编成一个场景单元），
+   * 没有熄灯 / 闪白 / 拉焦 / 交叉渐变。改它会重新编译程序.
+   */
+  seamlessTransitions: boolean;
+  /** 画框. */
+  overlayFrame: boolean;
+  /**
+   * 仅显示歌词文字：只画歌词与字上的效果（点亮、光晕、闪点、十字爆闪、径迹、追字光斑），
+   * 光场、烟雾、星空、线稿、浮尘、背景歌词、主题图标、画框与片尾卡的光都不画。字的明暗仍按光束算.
+   */
+  textOnly: boolean;
+  /** 关键字着色（主题 wordColors）. */
+  keywordColors: boolean;
+  /** 主题图标（主题 lyricsIcons 画成线稿）. */
+  themeIcons: boolean;
+  /** 主题色占比, 0..1：0 = 香槟金光；越高光色越接近强调色、点亮 / 未唱的字越接近主色 / 次色. */
+  themeColorMix: number;
+  /** 画质. */
+  renderQuality: LumiereRenderQuality;
+}
+
+export const DEFAULT_LUMIERE_TUNING: LumiereTuning = {
+  lightIntensity: 1,
+  audioResponse: 1,
+  fogDensity: 1,
+  darkField: 0.75,
+  moteAmount: 1,
+  bloom: 1,
+  textBloom: 1,
+  unlitOpacity: 0.22,
+  windowNeighbors: 2,
+  decay: 1,
+  echo: 1,
+  fogOctaves: 5,
+  lineArt: true,
+  frontBokeh: true,
+  trails: true,
+  hideTrails: false,
+  seamlessTransitions: true,
+  overlayFrame: true,
+  textOnly: false,
+  keywordColors: true,
+  themeIcons: true,
+  themeColorMix: 0.3,
+  renderQuality: 'full',
+};
+
 // Diorama's camera STYLE (calm/standard/chaotic) is not part of its tuning: like every other
 // visualizer it follows theme.animationIntensity (the player-panel intensity chip / AI themes), so
 // the theme system stays the single source of truth. The tuning only carries diorama-specific knobs.
@@ -1047,6 +1143,8 @@ export interface StatusMessage {
   nonce?: number;
   durationMs?: number;
   actionLabel?: string;
+  /** Icon drawn before actionLabel inside the action button. */
+  actionIcon?: LucideIcon;
   onAction?: () => void;
   cancelLabel?: string;
   onCancel?: () => void;
@@ -1073,7 +1171,8 @@ export interface NeteasePlaylist {
   trackUpdateTime: number;
   creator: NeteaseUser;
   description?: string;
-  specialType?: 'cloud';
+  // 'cloud' 是本地合成的云盘卡；数字是网易云 `/user/playlist` 原样给的（0 普通歌单，5「我喜欢的音乐」）。
+  specialType?: 'cloud' | number;
 }
 
 export interface Artist {
@@ -1213,6 +1312,7 @@ export interface LocalSong {
   matchedIsPureMusic?: boolean;
   matchedLyricsSongId?: number | string; // Provider-scoped ID used for the saved lyric result
   hasManualLyricSelection?: boolean;
+  markedPureMusic?: boolean; // User marked the song as instrumental: automatic lyric matching never runs for it
   folderName?: string; // Name of the folder if imported via folder import
   noAutoMatch?: boolean; // If true, do not attempt to auto-match metadata
   matchedLyricsSource?: LyricProviderSource;

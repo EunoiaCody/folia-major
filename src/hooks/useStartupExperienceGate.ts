@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { USER_GUIDE_AUTO_OPEN_VERSION } from '../components/modal/userGuideContent';
+import { hasOnboardingLibrarySuiteChoice } from '../library/app/librarySuiteChoice';
 import { requestPlaybackEntryViewPrompt, usePlaybackEntryViewStore } from '../stores/usePlaybackEntryViewStore';
 import { useSettingsModalStore } from '../stores/useSettingsModalStore';
 
@@ -11,10 +12,21 @@ export type StartupExperienceStep = 'release-notes' | 'playback-entry-view' | 'p
 
 type StartupExperienceState = {
     isCurrentRelease: boolean;
+    /** Ponder onboarding was completed in some version (it is shown once per install). */
     hasSeenPonder: boolean;
+    /**
+     * Ponder onboarding was completed in this version. It is the last startup step and nothing else opens it,
+     * so this means the whole sequence already ran for this release.
+     */
+    hasFinishedThisRelease: boolean;
     hasSeenReleaseNotes: boolean;
     isReleaseNotesOpen: boolean;
     hasChosenPlaybackEntryView: boolean;
+    /**
+     * The library-interface page is still owed (both suites exist and it has never been shown). Unlike everything
+     * else here it is not gated by the release: everyone is asked once (2026-10-10), whatever version they are on.
+     */
+    needsLibrarySuitePrompt: boolean;
     isPlaybackEntryViewPromptOpen: boolean;
     isPonderOnboardingOpen: boolean;
 };
@@ -23,28 +35,29 @@ type StartupExperienceState = {
 export const resolveStartupExperienceStep = ({
     isCurrentRelease,
     hasSeenPonder,
+    hasFinishedThisRelease,
     hasSeenReleaseNotes,
     isReleaseNotesOpen,
     hasChosenPlaybackEntryView,
+    needsLibrarySuitePrompt,
     isPlaybackEntryViewPromptOpen,
     isPonderOnboardingOpen,
 }: StartupExperienceState): StartupExperienceStep => {
-    if (!isCurrentRelease || hasSeenPonder || isPonderOnboardingOpen) {
+    if (isReleaseNotesOpen || isPlaybackEntryViewPromptOpen || isPonderOnboardingOpen) {
         return null;
     }
-    if (!hasSeenReleaseNotes) {
-        return isReleaseNotesOpen ? null : 'release-notes';
+    // The release sequence (notes, the playback choice, the Ponder gate) only runs on the release that auto-opens
+    // it, and not again once finished. Release notes are per version; the playback choice and the Ponder gate are
+    // once per install, so having finished Ponder must not suppress a later release's notes.
+    const releaseDue = isCurrentRelease && !hasFinishedThisRelease;
+    if (releaseDue && !hasSeenReleaseNotes) {
+        return 'release-notes';
     }
-    if (isReleaseNotesOpen) {
-        return null;
+    // The library-interface page is owed once to every install, outside the release gate.
+    if ((releaseDue && !hasChosenPlaybackEntryView) || needsLibrarySuitePrompt) {
+        return 'playback-entry-view';
     }
-    if (!hasChosenPlaybackEntryView) {
-        return isPlaybackEntryViewPromptOpen ? null : 'playback-entry-view';
-    }
-    if (isPlaybackEntryViewPromptOpen) {
-        return null;
-    }
-    return 'ponder';
+    return releaseDue && !hasSeenPonder ? 'ponder' : null;
 };
 
 const readLastSeenReleaseNotesVersion = (): string | null => (
@@ -53,12 +66,18 @@ const readLastSeenReleaseNotesVersion = (): string | null => (
         : localStorage.getItem(LAST_SEEN_RELEASE_NOTES_VERSION_STORAGE_KEY)
 );
 
-/** Runs the first-launch sequence: release notes, playback destination, then the Ponder shortcut gate. */
+/**
+ * Runs the first-launch sequence: release notes, the two-page choice prompt (library interface, then
+ * playback destination), then the Ponder shortcut gate. The prompt is gated by the playback choice alone,
+ * so installs that answered the older single-page prompt are not asked again.
+ */
 export const useStartupExperienceGate = () => {
     const lastSeenPonderVersion = useSettingsModalStore(state => state.lastSeenGuideVersion);
     const isPonderOnboardingOpen = useSettingsModalStore(state => state.isUserGuideModalOpen);
     const setIsPonderOnboardingOpen = useSettingsModalStore(state => state.setIsUserGuideModalOpen);
     const hasChosenPlaybackEntryView = usePlaybackEntryViewStore(state => state.hasChosenPlaybackEntryView);
+    const hasSeenLibrarySuitePrompt = usePlaybackEntryViewStore(state => state.hasSeenLibrarySuitePrompt);
+    const needsLibrarySuitePrompt = hasOnboardingLibrarySuiteChoice() && !hasSeenLibrarySuitePrompt;
     const isPlaybackEntryViewPromptOpen = usePlaybackEntryViewStore(state => state.isPlaybackEntryViewPromptOpen);
     const [lastSeenReleaseNotesVersion, setLastSeenReleaseNotesVersion] = useState(readLastSeenReleaseNotesVersion);
     const [isReleaseNotesOpen, setIsReleaseNotesOpen] = useState(false);
@@ -66,10 +85,12 @@ export const useStartupExperienceGate = () => {
 
     const nextStep = resolveStartupExperienceStep({
         isCurrentRelease: Boolean(appVersion && USER_GUIDE_AUTO_OPEN_VERSION === appVersion),
-        hasSeenPonder: Boolean(appVersion && lastSeenPonderVersion === appVersion),
+        hasSeenPonder: lastSeenPonderVersion !== null,
+        hasFinishedThisRelease: Boolean(appVersion && lastSeenPonderVersion === appVersion),
         hasSeenReleaseNotes: Boolean(appVersion && lastSeenReleaseNotesVersion === appVersion),
         isReleaseNotesOpen,
         hasChosenPlaybackEntryView,
+        needsLibrarySuitePrompt,
         isPlaybackEntryViewPromptOpen,
         isPonderOnboardingOpen,
     });
@@ -78,7 +99,7 @@ export const useStartupExperienceGate = () => {
         if (nextStep === 'release-notes') {
             setIsReleaseNotesOpen(true);
         } else if (nextStep === 'playback-entry-view') {
-            requestPlaybackEntryViewPrompt();
+            requestPlaybackEntryViewPrompt({ withLibrarySuite: hasOnboardingLibrarySuiteChoice() });
         } else if (nextStep === 'ponder') {
             setIsPonderOnboardingOpen(true);
         }
