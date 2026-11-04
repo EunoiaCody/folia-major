@@ -1,7 +1,7 @@
 import type React from 'react';
 import { LocalLibraryGroup, LocalSong, SongResult } from '../../../types';
 import { LIST_ROW_COVER_SIZE, buildLocalQueue } from '../../../services/playbackAdapters';
-import { sortLocalFolderSongs } from '../../../utils/localSongSorting';
+import { sortLocalAlbumSongs, sortLocalFolderSongs } from '../../../utils/localSongSorting';
 import type { LocalLibraryAssignment, LocalLibraryEntity } from '../../../types/localLibrary';
 import type { OnlineProviderId } from '../../../types/onlineMusic';
 import type {
@@ -10,7 +10,7 @@ import type {
     NavidromeGridViewCollectionDescriptor,
     NavidromeGridViewCollectionType,
     OnlineGridViewCollectionDescriptor,
-} from '../../../library/core/contracts/collection';
+} from '../../../library/core/collection/collection.contract';
 import { buildLocalLibraryIndex, followEntityRedirect } from '../../../utils/localLibraryIndex';
 import { getLocalCoverAssetUrl } from '../../../services/localCoverAssetUrl';
 
@@ -25,9 +25,9 @@ export type {
     NavidromeGridViewCollectionDescriptor,
     NavidromeGridViewCollectionType,
     OnlineGridViewCollectionDescriptor,
-} from '../../../library/core/contracts/collection';
-// 集合身份搬到了 library/core/model/collectionIdentity：store 与组件共用一份，在线集合带上 provider。
-export { collectionKey } from '../../../library/core/model/collectionIdentity';
+} from '../../../library/core/collection/collection.contract';
+// 集合身份搬到了 library/core/collection/collectionIdentity：store 与组件共用一份，在线集合带上 provider。
+export { collectionKey } from '../../../library/core/collection/collectionIdentity';
 
 const getDisplayName = (name: React.ReactNode) => (
     typeof name === 'string' || typeof name === 'number'
@@ -151,7 +151,8 @@ export const refreshLocalGridViewCollection = (
             .map(assignment => assignment.songId);
         const songIdSet = new Set(songIds);
         const currentSongs = localSongs.filter(song => songIdSet.has(song.id));
-        const refreshedSongs = entity.kind === 'album' ? sortLocalFolderSongs(currentSongs) : currentSongs;
+        // 专辑按碟号、曲号排，和首页专辑分组同一套规则；按文件名排会把各碟同号的曲目挤在一起。
+        const refreshedSongs = entity.kind === 'album' ? sortLocalAlbumSongs(currentSongs) : currentSongs;
         const albumArtist = entity.kind === 'album'
             ? resolveLocalAlbumArtistDisplay(songIds, catalog)
             : undefined;
@@ -231,7 +232,7 @@ export const resolveLocalGridViewCoverSource = (
     return getLocalGridViewCoverSource(orderedSongs);
 };
 
-// Navidrome 曲目的加载搬到了 library/core/services/navidromeCollectionTracks；资源直接使用它，这里只适配集合描述与本地数据。
+// Navidrome 曲目的加载搬到了 library/core/collection/resource/navidromeCollectionTracks.service；资源直接使用它，这里只适配集合描述与本地数据。
 
 export const isLocalGridViewCollection = (
     collection: GridViewCollectionDescriptor

@@ -13,14 +13,18 @@ vi.mock('@/stores/useAudioSettingsStore', () => ({
 
 const omniGetAudioSourceMock = vi.hoisted(() => vi.fn());
 const omniSearchProviderSongsMock = vi.hoisted(() => vi.fn());
-const omniGetProviderAvailabilityMock = vi.hoisted(() => vi.fn(() => ({ configured: true })));
+// omni 把 provider 的可用性并进了 getProviderSummaries()[].availability。
+const omniGetProviderSummariesMock = vi.hoisted(() => vi.fn(() => [
+    { providerId: 'kugou', availability: { configured: true } },
+    { providerId: 'qq', availability: { configured: true } },
+]));
 const kuwoResolveMock = vi.hoisted(() => vi.fn(async () => null as string | null));
 
 vi.mock('@/services/onlineMusic/omni', () => ({
     omni: {
         getAudioSource: omniGetAudioSourceMock,
         searchProviderSongs: omniSearchProviderSongsMock,
-        getProviderAvailability: omniGetProviderAvailabilityMock,
+        getProviderSummaries: omniGetProviderSummariesMock,
     },
 }));
 

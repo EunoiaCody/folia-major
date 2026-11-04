@@ -109,16 +109,6 @@ export const toSafePlaybackUrl = (
     return toSafeRemoteUrl(normalizedUrl);
 };
 
-/**
- * 判断是否为网易云试听片段 URL（路径含 jd-musicrep-ts / musicrep）。
- * 试听片段只有约 40-45 秒；解锁开启时这类缓存/预取地址必须被忽略，
- * 强制重新走完整音源链路，否则旧缓存会把 VIP 歌钉死在试听上。
- */
-export const isNeteaseTrialAudioUrl = (url: string | null | undefined): boolean => {
-    if (!url) return false;
-    return /(^|\/)jd-musicrep-ts(\/|$)/.test(url) || /(^|\/)musicrep\//.test(url);
-};
-
 // toSafePlaybackUrl only normalizes (http→https, drops trailing fallback URLs) and never filters the scheme;
 // script schemes and blank strings are not audio sources. Shared by the loader and the prefetch resolver.
 const NON_MEDIA_URL_SCHEME = /^\s*(javascript|vbscript):/i;

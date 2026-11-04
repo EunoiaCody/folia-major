@@ -6,6 +6,7 @@ import { calculateMatchScoreDetails } from '../utils/lyrics/matchScore';
 import { buildLyricSearchQuery } from '../utils/lyrics/searchQuery';
 import { getPlaybackSongKey } from '../utils/appPlaybackGuards';
 import { resolveKuwoDirectSource } from './kuwoClient';
+import { isNeteaseTrialAudioUrl } from './onlineMusic/netease/netease';
 
 // src/services/unlockService.ts
 // 显式 cross-provider 编排：当歌曲所属 provider 的标准授权音源不可用时，
@@ -113,8 +114,9 @@ export const resolveUnlockedAudioSource = async (
         try {
             // 未配置的 provider（Web 端缺 VITE_KUGOU_API_BASE / VITE_QQ_API_BASE）
             // 直接提示，避免把「未配置」误当成「搜索失败」。
-            const availability = omni.getProviderAvailability(providerId);
-            if (!availability.configured) {
+            const availability = omni.getProviderSummaries()
+                .find(summary => summary.providerId === providerId)?.availability;
+            if (!availability?.configured) {
                 console.warn(`[UnlockService] skip ${providerId} fallback for "${song.name}": ${providerId} API not configured`);
                 continue;
             }
@@ -130,4 +132,16 @@ export const resolveUnlockedAudioSource = async (
     }
     console.warn(`[UnlockService] all unlock channels failed for "${song.name}" (standard/unblock/match + cross-provider)`);
     return null;
+};
+
+/**
+ * 预取缓存里存着的是解不解锁都不该直接用的一段试听地址吗。
+ * 解锁开关打开时，旧缓存里的试听地址必须被忽略，强制重新解析完整音源——
+ * 否则旧缓存会把 VIP 歌永远钉在试听上。播放层只问这一句，不认平台。
+ */
+export const isStaleTrialPrefetchUrl = (audioUrl: string | null | undefined): boolean => {
+    if (!audioUrl) return false;
+    const settings = useAudioSettingsStore.getState();
+    const unlockOn = settings.unlockVipSongs || settings.unlockUnavailableSongs;
+    return unlockOn && isNeteaseTrialAudioUrl(audioUrl);
 };
