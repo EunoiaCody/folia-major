@@ -7,6 +7,7 @@ import type { GpuPreference } from '../../../stores/useDesktopSettingsStore';
 import { createToggleCommand, createAppLanguageCommand, createSettingsCommand, createSettingsAnchorCommand, defineCommand } from '../commandFactories';
 import { nowPlayingCardPositionCommand } from './nowPlayingCardPositionCommand';
 import { sleepTimerCommand } from './sleepTimerCommand';
+import { providerSetupCommand } from './providerSetupCommand';
 import { subtitleSettingsCommand } from './subtitleSettingsCommand';
 import { lyricExportCommands } from './lyricExportCommands';
 import { Gauge, Images, Languages, Layers3, Library, Settings2 } from 'lucide-react';
@@ -90,6 +91,7 @@ export const settingsCommands: CommandPaletteCommand[] = [
     },
     sleepTimerCommand,
     nowPlayingCardPositionCommand,
+    providerSetupCommand,
     createSettingsCommand('settings-options', 'Open Options', 'Open the options center', ['settings', 'options', '设置', '选项'], 'options', null, { executeShortcut: 'o' }),
     createSettingsCommand('settings-appearance', 'Appearance settings', 'Open visual and appearance settings', ['appearance', 'visual settings', '外观', '视觉'], 'options', 'appearance'),
     createSettingsAnchorCommand('settings-ai-provider', 'AI provider settings', 'Choose an AI provider and model', ['model connection', 'api key', '模型设置', '供应商', '密钥', 'deepseek', 'kimi', 'glm', 'qwen', '通义', '智谱'], 'electronSettings', { platform: ['electron'] }),
@@ -195,6 +197,22 @@ export const settingsCommands: CommandPaletteCommand[] = [
     createSettingsAnchorCommand('settings-audio-output', 'Audio output', 'Jump to the audio output device and format settings', ['output device', 'audio device', 'sound card', '输出设备'], 'audioOutputSettings'),
     createSettingsAnchorCommand('settings-transition', 'Smart transition', 'Jump to the FOLIA transition settings', ['automix', 'crossfade', 'transition', '智能过渡', '转场'], 'transitionSettings'),
     createSettingsAnchorCommand('settings-local-lyrics-priority', 'Local song lyrics priority', 'Choose whether local songs prefer local or online lyrics', ['local lyrics priority', 'online lyrics first', 'local song lyrics', '本地歌曲歌词优先级', '在线优先', '本地歌词', 'bendigeciyouxianji', 'bdgcyxj'], 'lyrics'),
+    createToggleCommand(
+        'auto-ai-lyric-segmentation-toggle',
+        'settings',
+        'Automatic AI lyric segmentation',
+        'Turn on or off segmenting each new song’s lyrics into words with AI by itself',
+        ['auto segmentation', 'ai word split', 'auto ai segmentation', '自动分词', '自动AI分词', 'AI分词'],
+        context => context.settings.toggleAutoAiLyricSegmentation(),
+    ),
+    createToggleCommand(
+        'keep-provider-word-timing-toggle',
+        'settings',
+        'Keep platform word-timed lyrics',
+        'Turn on or off keeping the word-timed lyrics a song’s own platform comes with',
+        ['platform lyrics', 'own lyrics', 'word timing', 'lyric source', '自带歌词', '逐字歌词', '歌词源', '平台歌词'],
+        context => context.settings.toggleKeepProviderWordTiming(),
+    ),
     createSettingsAnchorCommand('settings-local-lyric-format-order', 'Local lyric file format priority', 'Choose which format wins when a track has several lyric files', ['lyric format priority', 'lyric file order', 'lrc ttml priority', '本地歌词文件格式优先级', '歌词格式', '格式优先级', 'geciwenjiangeshi', 'gcgsyxj'], 'localLyricFormatOrder'),
     createSettingsCommand('settings-integration', 'Integration settings', 'Open Stage, Now Playing, and Navidrome settings', ['integration', 'stage', 'now playing', 'navidrome settings', '集成', '连接'], 'options', 'integration'),
     createSettingsAnchorCommand('settings-navidrome', 'Navidrome server', 'Jump to the Navidrome server connection', ['navidrome', 'subsonic', 'music server', '音乐服务器'], 'navidrome'),
@@ -725,7 +743,9 @@ export const settingsCommands: CommandPaletteCommand[] = [
     createToggleCommand('settings-toggle-track-switch-buttons', 'settings', 'Always show track switch arrows', 'Toggle whether the progress bar track switch arrows stay visible beside the title', ['track switch buttons', 'previous next arrows', 'progress bar arrows', 'song switch buttons', '切歌箭头', '切换箭头', '始终显示切歌按钮', '进度条切歌按钮', '上一首下一首按钮', 'jinduting qiege', 'sysqgan'], context => context.settings.toggleAlwaysShowTrackSwitchButtons()),
     createToggleCommand('settings-toggle-main-window-titlebar', 'settings', 'Always show window control buttons', 'Toggle whether the main window control buttons stay visible', ['always show window controls', 'window control buttons', 'always show titlebar', 'main window titlebar', 'titlebar', '标题栏', '控制按钮', '始终显示标题栏', '始终显示控制按钮', '主窗口标题栏', 'kongzhi annniu', 'bt', 'zckbt'], context => context.settings.toggleAlwaysShowMainWindowTitlebar()),
     createToggleCommand('settings-toggle-player-header-blur', 'settings', 'Blurred player header', 'Toggle a frosted bar behind the window titlebar on the player page so its buttons stay readable', ['player header blur', 'titlebar blur', 'frosted titlebar', 'header background', 'window controls visibility', '播放页顶栏模糊背景', '顶栏模糊', '标题栏模糊', '标题栏背景', '磨砂标题栏'], context => context.settings.togglePlayerHeaderBlur(), { platform: ['electron'] }),
+    createToggleCommand('settings-toggle-titlebar-side', 'settings', 'Switch window controls side', 'Move window controls between left and right', ['window buttons placement', 'titlebar side', '窗口按钮位置', '左右切换'], context => context.settings.toggleTitlebarSide(), { platform: ['electron'] }),
     createToggleCommand('settings-toggle-fullscreen-titlebar-button', 'settings', 'Toggle fullscreen button visibility', 'Show or hide the fullscreen button in the desktop window controls', ['fullscreen button', 'titlebar fullscreen', 'window fullscreen button', 'show fullscreen control', 'hide fullscreen button', 'fullscreen button visibility', '全屏按钮', '标题栏全屏按钮', '显示全屏按钮', '隐藏全屏按钮', '窗口全屏控制', 'quanping annniu', 'biaotilan quanping'], context => context.settings.toggleHideFullscreenButton(), { platform: ['electron'] }),
+    createToggleCommand('settings-toggle-native-mac-traffic-lights', 'settings', 'Native macOS traffic lights', 'Toggle the system traffic lights in place of the drawn minimize, maximize and close buttons (after a restart)', ['mac window control', 'traffic lights', 'window buttons', 'macOS 红绿灯', '原生红绿灯', '窗口按钮'], context => context.settings.toggleNativeMacTrafficLights(), { platform: ['mac'] }),
     createToggleCommand('settings-toggle-native-mac-fullscreen-button', 'settings', 'Native macOS fullscreen button', 'Toggle whether the macOS window control enters native fullscreen instead of maximizing', ['mac window control', 'native fullscreen', 'maximize button', 'macOS 全屏', '原生全屏', '窗口按钮'], context => context.settings.toggleNativeMacFullscreenButton(), { platform: ['mac'] }),
     createToggleCommand('settings-toggle-cursor-auto-hide', 'settings', 'Hide cursor with player controls', 'Toggle whether the mouse pointer disappears together with the auto-hidden player controls', ['cursor', 'mouse pointer', 'hide cursor', 'hide mouse', 'pointer', '鼠标', '鼠标指针', '隐藏鼠标', '隐藏指针', '指针自动隐藏'], context => context.settings.toggleAutoHideCursorWithPlayerChrome()),
     createToggleCommand('settings-toggle-cursor-idle-hide', 'settings', 'Hide cursor when idle', 'Toggle hiding the mouse pointer after a pause while the player controls stay visible', ['idle cursor', 'auto hide cursor', 'hide mouse pointer', 'cursor idle', '鼠标空闲隐藏', '空闲隐藏鼠标', '单独隐藏鼠标', '自动隐藏鼠标'], context => context.settings.toggleHideCursorWhenIdle()),
@@ -733,6 +753,7 @@ export const settingsCommands: CommandPaletteCommand[] = [
     createToggleCommand('settings-toggle-transcode-fallback', 'settings', 'Transcode unsupported audio', 'Toggle Electron recovery for local and Navidrome audio Chromium cannot decode', ['ffmpeg', 'unsupported audio', 'decode fallback', '无法解码', '转码恢复'], context => context.settings.toggleTranscodeFallback(), { platform: ['electron'] }),
     createToggleCommand('settings-toggle-playback-fade', 'settings', 'Fade on pause and resume', 'Toggle the short fade when pausing and resuming playback', ['fade', 'fade in', 'fade out', 'pause fade', 'smooth pause', 'crossfade pause', '淡入淡出', '暂停淡出', '播放淡入', '渐入渐出'], context => context.settings.togglePlaybackFade()),
     createToggleCommand('settings-toggle-auto-skip-unplayable', 'settings', 'Skip unplayable songs', 'Toggle counting down to a skip when a song is restricted or fails for an unknown reason', ['auto skip', 'skip unavailable', 'skip restricted songs', 'cannot play', 'unplayable', 'vip only', '自动跳过', '跳过无法播放', '无法播放', '跳过会员歌曲', '跳过灰色歌曲', '播放失败跳过'], context => context.settings.toggleAutoSkipUnplayable()),
+    createToggleCommand('settings-toggle-shuffle-round-no-repeat', 'settings', 'Shuffle in rounds', 'Toggle keeping songs heard this round after the rest when shuffling, and reshuffling a finished round under list loop', ['shuffle round', 'no repeat', 'shuffle without repeats', '一轮不重复', '洗牌不重复', '随机不重复', '打乱不重复'], context => context.settings.toggleShuffleRoundNoRepeat()),
     createToggleCommand('settings-toggle-bottom-subtitle-overlay', 'settings', 'Toggle bottom subtitle overlay', 'Show or hide the whole bottom subtitle overlay', [
             'bottom subtitle overlay',
             'subtitle overlay',

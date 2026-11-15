@@ -1,6 +1,7 @@
+import { useWindowButtonsAtTopLeft } from '../../../../hooks/useWindowButtonsAtTopLeft';
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { motion, useMotionValue, animate, AnimatePresence, useDragControls, useIsPresent } from 'framer-motion';
-import { ChevronLeft, Crosshair, Disc, Download, ImagePlus, Play, Plus, Loader2, Heart, ListPlus, NotebookPen, Pencil, RefreshCw, Trash2, Star, Tags } from 'lucide-react';
+import { ChevronLeft, Crosshair, Disc, Download, ImagePlus, Play, Plus, Shuffle, Loader2, Heart, ListPlus, NotebookPen, Pencil, RefreshCw, Trash2, Star, Tags } from 'lucide-react';
 import GridPanelToggleIndicator from '../shared/GridPanelToggleIndicator';
 import { useTranslation } from 'react-i18next';
 import { SongResult, type LocalSong, type StatusMessage, Theme, type UnifiedSong } from '../../../../types';
@@ -8,6 +9,7 @@ import { isSongUnavailable } from '../../../../services/onlineMusic/songAvailabi
 import { formatSongName } from '../../../../utils/songNameFormatter';
 import { getSizedCoverUrl } from '../../../../utils/coverUrl';
 import { getSongCoverUrl } from '../../../../services/onlineMusic/songMetadata';
+import { resolveCollectionArtistCatalogId } from '../../../../services/onlineMusic/catalogRefs';
 import { colorWithAlpha } from '../../../../components/visualizer/colorMix';
 import { onlineFailureOf, type OnlineFailure } from '../../../../services/onlineMusic/failure/onlineFailureCase';
 import { onlineFailureMessage } from '../../../../services/onlineMusic/failure/onlineFailureTexts';
@@ -79,6 +81,7 @@ import { useCollectionResourceState } from '../../../core/collection/resource/us
 import { useCollectionMutationSnapshot } from '../../../core/collection/mutations/useCollectionMutations';
 import { useCollectionView } from '../../../core/collection/useCollectionView';
 import { useCommittedQuery } from '../../../core/shared/useCommittedQuery';
+import { resolveCollectionArtistLinks } from '../../../core/shared/collectionArtistLinks';
 import { useLibrarySessionQuery } from '../../../core/shared/useLibrarySessionQuery';
 import { useGridCommandFilter } from '../../../../hooks/useGridCommandFilter';
 import {
@@ -87,6 +90,7 @@ import {
     useLibraryBrowseSessionStore,
 } from '../../../core/shared/useLibraryBrowseSessionStore';
 import { useLocalTrackSortStore } from '../../../core/directory/useLocalTrackSortStore';
+import { formatAlbumDuration } from '../../../core/collection/albumDuration';
 
 interface GridViewProps {
     title: string;
@@ -108,6 +112,8 @@ interface GridViewProps {
     // Optional self-contained collection props
     collection?: any;
     onPlayAll?: (songs: SongResult[]) => void;
+    /** 随机播放当前范围（声明了 shuffle-scope 才给）：给了，信息面板的「播放全部」切成两半，右边一格是它。 */
+    onShufflePlayAll?: (songs: SongResult[]) => void;
     onAddAllToQueue?: (songs: SongResult[], options?: { suppressToast?: boolean }) => number | void;
     /** 收进速记簿：聚焦卡片与曲目侧栏行上的一首（suite 声明了 collect 才给）。出处由这里按显示的集合名补上。 */
     collectTrack?: (songs: SongResult[], origin?: LibraryCollectOrigin) => void;
@@ -241,18 +247,6 @@ const formatAlbumDate = (timestamp?: number) => {
     return date.toLocaleDateString();
 };
 
-const formatAlbumDuration = (duration?: number) => {
-    if (!duration || !Number.isFinite(duration)) return '';
-    const totalSeconds = duration > 10000 ? Math.round(duration / 1000) : Math.round(duration);
-    const hours = Math.floor(totalSeconds / 3600);
-    const minutes = Math.floor((totalSeconds % 3600) / 60);
-    const seconds = totalSeconds % 60;
-    if (hours > 0) {
-        return `${hours}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
-    }
-    return `${minutes}:${String(seconds).padStart(2, '0')}`;
-};
-
 export const GridView: React.FC<GridViewProps> = ({
     title,
     subtitle,
@@ -269,6 +263,7 @@ export const GridView: React.FC<GridViewProps> = ({
     isDaylight,
     collection,
     onPlayAll,
+    onShufflePlayAll,
     onAddAllToQueue,
     collectTrack,
     collectScope,
@@ -286,6 +281,7 @@ export const GridView: React.FC<GridViewProps> = ({
     declaredActions,
 }) => {
     const { t } = useTranslation();
+    const lowerBackButton = useWindowButtonsAtTopLeft();
     const bottomBarPanelBottomPx = useSidePanelBottomPx();
     const fullBleedCover = useGridViewSettingsStore(state => state.gridViewFullBleedCover);
     // Only the full-bleed layout can be square: the polaroid frame needs the extra height for the
@@ -1592,6 +1588,7 @@ export const GridView: React.FC<GridViewProps> = ({
         setSortDirection: handleLocalTrackSortDirectionChange,
         canReloadOnlineCollection: canReloadOnlineCollection && !loading,
         playFiltered: () => onPlayAll?.(contextActionTracks),
+        shufflePlayFiltered: onShufflePlayAll ? () => onShufflePlayAll(contextActionTracks) : undefined,
         enqueueFiltered: () => onAddAllToQueue?.(contextActionTracks),
         collectFiltered: onCollectAll ? () => onCollectAll(contextActionTracks) : undefined,
         reloadOnlineCollection,
@@ -1614,7 +1611,10 @@ export const GridView: React.FC<GridViewProps> = ({
         run: (action) => runGridSurfaceAction(action, gridSurfaceParams),
     });
 
-    const albumArtists = Array.isArray(infoCollection?.artists) ? infoCollection.artists : [];
+    // 专辑歌手：能打开的才做成按钮（与 Bravais 专辑海报同一条规则，在线的问平台，占位 id 不当真）。
+    const albumArtists = infoCollection && Array.isArray(infoCollection.artists)
+        ? resolveCollectionArtistLinks(infoCollection, resolveCollectionArtistCatalogId)
+        : [];
     const albumAlias = infoCollection?.aliases?.[0];
     const albumPublishedAt = infoCollection?.publishedAt;
     const albumPublisher = infoCollection?.publisher;
@@ -1654,7 +1654,7 @@ export const GridView: React.FC<GridViewProps> = ({
                 // 返回按钮表示看完了（onDone）：宿主清掉浏览会话、让每套 suite 忘掉布局记录（网格的 sessionStorage
                 // 记录经 entry 的 layout.forget），再返回。Escape 与浏览器后退保留（onBack）。P4.5 起不在这里清。
                 onClick={onDone}
-                className="absolute left-6 top-5 w-10 h-10 rounded-full flex items-center justify-center transition-all shadow-lg hover:scale-105 active:scale-95 z-[70]"
+                className={`absolute left-6 ${lowerBackButton ? 'top-12' : 'top-5'} w-10 h-10 rounded-full flex items-center justify-center transition-all shadow-lg hover:scale-105 active:scale-95 z-[70]`}
                 style={{
                     backgroundColor: isDaylight ? 'rgba(0,0,0,0.05)' : 'rgba(255,255,255,0.08)',
                     backdropFilter: 'blur(8px)',
@@ -1954,15 +1954,19 @@ export const GridView: React.FC<GridViewProps> = ({
                                             )}
                                             {albumArtists.length > 0 ? (
                                                 <div className="flex flex-wrap gap-x-2 gap-y-1">
-                                                    {albumArtists.map((artist: { id: string | number; name: string }, index: number) => (
-                                                        <button
-                                                            key={`${artist.id}-${index}`}
-                                                            type="button"
-                                                            onClick={() => onSelectArtist?.(artist.id, artist)}
-                                                            className="font-semibold hover:underline"
-                                                        >
-                                                            {artist.name}
-                                                        </button>
+                                                    {albumArtists.map(({ artist, targetId }, index) => (
+                                                        targetId !== undefined && onSelectArtist ? (
+                                                            <button
+                                                                key={`${artist.id}-${index}`}
+                                                                type="button"
+                                                                onClick={() => onSelectArtist(targetId, artist)}
+                                                                className="font-semibold hover:underline"
+                                                            >
+                                                                {artist.name}
+                                                            </button>
+                                                        ) : (
+                                                            <span key={`${artist.id}-${index}`} className="font-semibold">{artist.name}</span>
+                                                        )
                                                     ))}
                                                 </div>
                                             ) : null}
@@ -2003,21 +2007,44 @@ export const GridView: React.FC<GridViewProps> = ({
                                 className="space-y-2 mt-4 pt-4 border-t shrink-0"
                                 style={{ borderTopColor: 'color-mix(in srgb, var(--text-primary) 12%, transparent)' }}
                             >
-                                <button
-                                    onClick={() => {
-                                        if (onPlayAll && contextActionTracks.length > 0) {
-                                            onPlayAll(contextActionTracks);
-                                        }
-                                    }}
-                                    disabled={contextActionTracks.length === 0}
-                                    className="w-full py-3 rounded-full font-bold text-xs transition-transform hover:scale-102 active:scale-98 flex items-center justify-center gap-1.5 shadow-md disabled:opacity-40 disabled:hover:scale-100 cursor-pointer"
+                                {/* 「播放全部」：声明了随机播放时切成两半，右边一格随机播放（当前范围打乱后成为队列）。 */}
+                                <div
+                                    role={onShufflePlayAll ? 'group' : undefined}
+                                    aria-label={onShufflePlayAll ? t('playlist.playAll') : undefined}
+                                    className={`w-full flex rounded-full shadow-md transition-transform overflow-hidden${contextActionTracks.length > 0 ? ' hover:scale-102 active:scale-98' : ' opacity-40'}`}
                                     style={{ backgroundColor: 'var(--text-primary)', color: 'var(--bg-color)' }}
                                 >
-                                    <Play size={14} fill="currentColor" />
-                                    {hasSearchQuery
-                                        ? t('playlist.playFilteredTracks', { count: contextActionTracks.length })
-                                        : t('playlist.playAll')}
-                                </button>
+                                    <button
+                                        onClick={() => {
+                                            if (onPlayAll && contextActionTracks.length > 0) {
+                                                onPlayAll(contextActionTracks);
+                                            }
+                                        }}
+                                        disabled={contextActionTracks.length === 0}
+                                        data-grid-action="play-scope"
+                                        className="flex-1 min-w-0 py-3 font-bold text-xs flex items-center justify-center gap-1.5 cursor-pointer disabled:cursor-default"
+                                    >
+                                        <Play size={14} fill="currentColor" />
+                                        {hasSearchQuery
+                                            ? t('playlist.playFilteredTracks', { count: contextActionTracks.length })
+                                            : t('playlist.playAll')}
+                                    </button>
+                                    {onShufflePlayAll && (
+                                        <button
+                                            onClick={() => {
+                                                if (contextActionTracks.length > 0) onShufflePlayAll(contextActionTracks);
+                                            }}
+                                            disabled={contextActionTracks.length === 0}
+                                            data-grid-action="shuffle-scope"
+                                            aria-label={t('playlist.shufflePlay')}
+                                            title={t('playlist.shufflePlay')}
+                                            className="shrink-0 px-4 flex items-center justify-center border-l cursor-pointer disabled:cursor-default"
+                                            style={{ borderLeftColor: 'color-mix(in srgb, var(--bg-color) 30%, transparent)' }}
+                                        >
+                                            <Shuffle size={14} />
+                                        </button>
+                                    )}
+                                </div>
                                 <button
                                     onClick={() => {
                                         if (onAddAllToQueue && contextActionTracks.length > 0) {

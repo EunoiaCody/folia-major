@@ -1,5 +1,6 @@
 import { useMemo, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
+import { FileDown, FolderSync, IdCard, ImagePlus, ListMusic, NotebookPen, PencilLine, WandSparkles } from 'lucide-react';
 import type { SongResult, UnifiedSong } from '../../../types';
 import type { LibraryActionId, LibraryCollectionSurfaceProps } from '../../core/suite/suite.contract';
 import type { CollectionMutationController, CollectionMutationSnapshot, LibraryMutationResult } from '../../core/collection/mutations/mutations.contract';
@@ -12,9 +13,11 @@ import type { CollectionView } from '../../core/collection/useCollectionView';
 import type { LocalSongFolderSortDirection, LocalSongFolderSortField } from '../../../utils/localSongSorting';
 import type { DailyStyleSelection } from '../../../types/onlineMusic';
 import { projectCollectionStatus, resolveWallPeriodCount } from './bravaisCollectionStatus';
-import type { BravaisLayerEntries, BravaisLayerWall, BravaisSeamCollection, BravaisSeamFilter, BravaisSeamMenuItem } from './bravaisSeamModels';
+import { quickPriority } from './bravaisSeamQuickCells';
+import type { BravaisLayerEntries, BravaisLayerWall, BravaisSeamCollection, BravaisSeamFilter, BravaisSeamMenuItem, BravaisSeamReload } from './bravaisSeamModels';
 import type { useBravaisCollectionForms } from './useBravaisCollectionForms';
 import type { useBravaisMutationNotice } from './useBravaisMutationNotice';
+import { openRecommendationPreferences, useRecommendationPreferencesEntry } from '../../../components/recommendationPreferences/recommendationPreferencesEntry';
 
 // src/library/suites/bravais/useBravaisCollectionSeam.ts
 // 集合层在缝与墙上的投影（设计稿 §10.2 / §10.6）：缝里标题下的描述、收藏星标、补页进度 / 续传、状态行、过滤输入位、每日推荐的日期步进、
@@ -104,20 +107,28 @@ export const useBravaisCollectionSeam = (input: BravaisCollectionSeamInput) => {
     const status = projection.status;
     const syncLine = projection.sync && (projection.sync.onResume && !declares('resume-sync') ? { ...projection.sync, onResume: undefined } : projection.sync);
 
-    // 「⋯ 更多」：低频的集合动作（重新拉取、改名、加入歌单、重扫、整理、导出、实体信息、设置封面、删除）。
+    // 重新拉取：画在元数据行（「N 首」）上，不进「⋯ 更多」。
+    const reloadCapability = actions.capabilities.reload;
+    const reload = useMemo<BravaisSeamReload | undefined>(() => (declares('reload') && reloadCapability.supported ? {
+        label: t('playlist.reload'),
+        disabled: !reloadCapability.enabled,
+        pending: reloadCapability.pending,
+        run: () => latest.current.actions.reload(),
+    } : undefined), [declares, reloadCapability, t]);
+
+    // 集合动作（改名、加入歌单、收进速记簿、重扫、整理、导出、实体信息、设置封面、删除）。方案 C：带图标与优先级的项
+    // 在按钮行下面的动作格放得下时直接成一格（BravaisSeamCollectionMenu），放不下的和删除留在「⋯ 更多」里。
     const menu = useMemo<BravaisSeamMenuItem[]>(() => {
         const items: BravaisSeamMenuItem[] = [];
         const runMutation = (action: (controller: CollectionMutationController) => Promise<LibraryMutationResult>) => () => {
             const controller = latest.current.mutations;
             if (controller) void latest.current.notice.run(() => action(controller));
         };
-        if (declares('reload') && actions.capabilities.reload.supported) {
-            items.push({ id: 'reload', label: t('playlist.reload'), disabled: !actions.capabilities.reload.enabled, run: () => latest.current.actions.reload() });
-        }
-        if (offers('rename')) items.push({ id: 'rename', label: t('libraryBravaisCollection.rename'), disabled: pending, run: forms.openRename });
+        const quick = (id: string, icon: BravaisSeamMenuItem['icon']) => ({ id, icon, priority: quickPriority(id) });
+        if (offers('rename')) items.push({ ...quick('rename', PencilLine), label: t('libraryBravaisCollection.rename'), disabled: pending, run: forms.openRename });
         if (offers('add-to-playlist')) {
             items.push({
-                id: 'add-to-playlist',
+                ...quick('add-to-playlist', ListMusic),
                 label: t('localMusic.addToPlaylist'),
                 disabled: pending || view.playableTracks.length === 0,
                 run: () => latest.current.forms.openPick({ kind: 'collection' }),
@@ -126,24 +137,24 @@ export const useBravaisCollectionSeam = (input: BravaisCollectionSeamInput) => {
         // 收进速记簿（core 的 collect-scope）：当前范围，过滤时只收匹配项，不动队列。
         if (declares('collect-scope') && actions.capabilities.collect) {
             items.push({
-                id: 'collect-scratchpad',
+                ...quick('collect-scratchpad', NotebookPen),
                 label: t('scratchpad.collectScope'),
                 disabled: view.contextTracks.length === 0,
                 run: () => latest.current.actions.collectScope(),
             });
         }
-        if (offers('resync-folder')) items.push({ id: 'resync-folder', label: t('localMusic.reimport'), disabled: pending, run: runMutation(c => c.resyncFolder()) });
-        if (offers('resync-all-folders')) items.push({ id: 'resync-all-folders', label: t('localMusic.reimport'), disabled: pending, run: runMutation(c => c.resyncAllFolders()) });
-        if (offers('organize-song-info')) items.push({ id: 'organize-song-info', label: t('localMusic.organizeSongInfo'), run: runMutation(c => c.organizeSongInfo()) });
-        if (offers('export-playlist')) items.push({ id: 'export-playlist', label: t('localMusic.exportPlaylist'), disabled: pending, run: runMutation(c => c.exportPlaylist()) });
+        if (offers('resync-folder')) items.push({ ...quick('resync-folder', FolderSync), label: t('localMusic.reimport'), disabled: pending, run: runMutation(c => c.resyncFolder()) });
+        if (offers('resync-all-folders')) items.push({ ...quick('resync-all-folders', FolderSync), label: t('localMusic.reimport'), disabled: pending, run: runMutation(c => c.resyncAllFolders()) });
+        if (offers('organize-song-info')) items.push({ ...quick('organize-song-info', WandSparkles), label: t('localMusic.organizeSongInfo'), run: runMutation(c => c.organizeSongInfo()) });
+        if (offers('export-playlist')) items.push({ ...quick('export-playlist', FileDown), label: t('localMusic.exportPlaylist'), disabled: pending, run: runMutation(c => c.exportPlaylist()) });
         if (offers('edit-entity')) {
             items.push({
-                id: 'edit-entity',
+                ...quick('edit-entity', IdCard),
                 label: t('localMusic.entityInfo', { kind: collection.type === 'album' ? t('localMusic.albumLabel') : t('localMusic.artistLabel') }),
                 run: runMutation(c => c.editEntity()),
             });
         }
-        if (offers('set-cover')) items.push({ id: 'set-cover', label: t('localCollectionCover.menuLabel'), run: runMutation(c => c.setCover()) });
+        if (offers('set-cover')) items.push({ ...quick('set-cover', ImagePlus), label: t('localCollectionCover.menuLabel'), run: runMutation(c => c.setCover()) });
         if (offers('delete-collection')) {
             items.push({
                 id: 'delete-collection',
@@ -154,11 +165,13 @@ export const useBravaisCollectionSeam = (input: BravaisCollectionSeamInput) => {
             });
         }
         return items;
-    }, [actions.capabilities.collect, actions.capabilities.reload, collection.type, declares, forms.openDelete, forms.openRename, isLocalFolder, offers, pending, t, view.contextTracks.length, view.playableTracks.length]);
+    }, [actions.capabilities.collect, collection.type, declares, forms.openDelete, forms.openRename, isLocalFolder, offers, pending, t, view.contextTracks.length, view.playableTracks.length]);
 
     // 每日推荐的日期步进：‹ 更早 · 日期 · 更近 ›，今天还能「刷新今天」。换日期就是换内容：整面翻牌，不换层。
     // 平台有风格推荐（#938）时上面多一行「默认推荐 / 风格推荐」；看风格推荐时步进换成选中的风格，点它翻出风格选择。
+    // 平台声明了每日推荐的偏好入口时，那个位置是「偏好设置」（两样都有就都在）。
     const dailyStyleLabel = describeDailyStyle(mutation.dailyStyleGroups, mutation.dailyStyleSelection);
+    const offersPreferences = useRecommendationPreferencesEntry('daily');
     const daily = useMemo<BravaisSeamCollection['daily']>(() => {
         if (!offers('daily-date')) return undefined;
         const dates = ['', ...mutation.dailyHistoryDates];
@@ -189,8 +202,9 @@ export const useBravaisCollectionSeam = (input: BravaisCollectionSeamInput) => {
                 title: t('home.dailyStylePickerTitle'),
                 onOpen: () => latest.current.forms.openDailyStyle(),
             } : undefined,
+            preferences: offersPreferences ? { label: t('recommendationPreferences.open'), onOpen: openRecommendationPreferences } : undefined,
         };
-    }, [dailyStyleLabel, isLoading, mutation.dailyDate, mutation.dailyHistoryDates, mutation.dailyStyleAvailable, mutation.dailyStyleShown, offers, t]);
+    }, [dailyStyleLabel, isLoading, mutation.dailyDate, mutation.dailyHistoryDates, mutation.dailyStyleAvailable, mutation.dailyStyleShown, offers, offersPreferences, t]);
 
     const subscribe = useMemo<BravaisSeamCollection['subscribe']>(() => {
         if (!offers('subscribe')) return undefined;
@@ -301,13 +315,14 @@ export const useBravaisCollectionSeam = (input: BravaisCollectionSeamInput) => {
         status,
         notice: notice.notice,
         daily,
+        reload,
         menu,
         moreLabel: t('libraryBravaisCollection.more'),
         listLabel: t('libraryBravaisCollection.list'),
         form,
     // status / syncLine 是每次渲染新算的小对象：按它们的文案比较，免得层描述白换身份。
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    }), [daily, description, form, menu, notice.notice, status?.tone, status?.text, subscribe, syncLine?.state, syncLine?.label, t]);
+    }), [daily, description, form, menu, notice.notice, reload, status?.tone, status?.text, subscribe, syncLine?.state, syncLine?.label, t]);
 
     // 墙的内容规则：补页期间的循环周期（新页只翻新 slot）、有限拼贴的规划条目数、过滤身份、首屏呼吸。
     const periodCount = resolveWallPeriodCount({ itemCount: input.itemCount, totalCount, sync });

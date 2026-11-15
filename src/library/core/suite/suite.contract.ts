@@ -37,6 +37,7 @@ export type LibrarySuiteId = string;
  * | --- | --- | --- |
  * | play / enqueue | 条目本身可播放 | —（卡片 / 行上的动作） |
  * | play-scope / enqueue-scope | useCollectionActions 的 scope | play-filtered / enqueue-filtered |
+ * | shuffle-scope | 同 play-scope（随机播放当前范围：打乱后成为队列，useCollectionActions 的 shuffleScope） | shuffle-play-filtered |
  * | collect / collect-scope | 宿主的播放端口给了 collectTracks（收进速记簿） | collect-filtered（只有 collect-scope） |
  * | save-to-playlist | 宿主的播放端口给了 pickPlaylistFor，且 canPickPlaylistFor 说这首能进（应用的歌单选择器，含「我喜欢」） | —（卡片上的按钮） |
  * | filter | 浏览会话（总是可用） | —（命令面板的筛选框） |
@@ -66,6 +67,7 @@ export type LibraryActionId =
     | 'play'
     | 'enqueue'
     | 'play-scope'
+    | 'shuffle-scope'
     | 'enqueue-scope'
     | 'collect'
     | 'collect-scope'
@@ -136,24 +138,28 @@ export type LibraryHomeActionId =
  * | --- | --- | --- |
  * | play / enqueue | 有可播放的热门歌曲（单曲，卡片 / 行上的动作） | — |
  * | play-scope | 可播放的热门歌曲 > 0（以它们为队列从第一首播） | play-top-songs |
+ * | shuffle-scope | 同 play-scope（随机播放热门歌曲：打乱后成为队列） | shuffle-top-songs |
  * | enqueue-scope | 可入队的热门歌曲 > 0（静默整批入队，歌手页报实际收下的条数） | enqueue-top-songs |
  * | filter | 总是可用（浏览会话的 query，只筛专辑名） | —（命令面板的筛选框） |
  * | reload | 在线 / Navidrome 歌手（或任何加载失败的歌手）不在加载中 | reload |
  * | resume-sync | 专辑分页失败中断 | retry-albums |
  * | edit-entity | 本地歌手且描述带实体 id | edit-entity |
  * | open-album / open-artist | 有专辑 / 有热门歌曲（专辑卡、歌曲上的歌手 / 专辑链接） | — |
+ * | open-all-songs | 在线歌手、详情已到且热门歌曲之外还有歌（快照的 hasMoreSongs）；打开「全部歌曲」那一层集合 | open-all-songs |
  */
 export type LibraryArtistActionId =
     | 'play'
     | 'enqueue'
     | 'play-scope'
+    | 'shuffle-scope'
     | 'enqueue-scope'
     | 'filter'
     | 'reload'
     | 'resume-sync'
     | 'edit-entity'
     | 'open-album'
-    | 'open-artist';
+    | 'open-artist'
+    | 'open-all-songs';
 
 /**
  * 某个 surface 上实际渲染它的那套 suite 声明的动作：core 动作与 suite 自己的局部动作
@@ -245,6 +251,11 @@ export type LibraryArtistSurfaceProps = LibrarySurfaceBaseProps & LibraryCollect
     isDaylight: boolean;
     /** 本地歌手实体的编辑对话框（宿主挂载）。 */
     onEditEntity: (entityId: string) => void;
+    /**
+     * 压入一层集合（宿主的导航栈，与打开专辑同一条路）。歌手页用它打开「全部歌曲」：core 的 artistSongsCollection
+     * 给出那一层的描述（在线集合，type 'artist_songs'），suite 只调 useArtistView 的 openAllSongs。没给时没有这个入口。
+     */
+    onOpenCollection?: (collection: LibraryCollectionDescriptor) => void;
 };
 
 /** Host-owned navigation entry; suites present it without knowing its implementation. */

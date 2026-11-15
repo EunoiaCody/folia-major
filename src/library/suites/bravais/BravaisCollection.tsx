@@ -13,9 +13,11 @@ import { useCollectionActions } from '../../core/collection/mutations/useCollect
 import { useCollectionMutationSnapshot } from '../../core/collection/mutations/useCollectionMutations';
 import { useLocalTrackSortStore } from '../../core/directory/useLocalTrackSortStore';
 import { useGridSurfaceRegistration } from '../../../hooks/useGridSurfaceRegistration';
-import { canResolveSongCatalogRef } from '../../../services/onlineMusic/catalogRefs';
+import { canResolveSongCatalogRef, resolveCollectionArtistCatalogId } from '../../../services/onlineMusic/catalogRefs';
 import { useNavigationPageKey } from '../../../components/app/playing-song-locator/useNavigationPageKey';
 import type { BravaisItem, BravaisLayer, BravaisLayerLocate, BravaisSeamModel } from './bravaisLayer';
+import type { BravaisSeamAlbumArtist, BravaisSeamArtistSongs } from './bravaisSeamModels';
+import { ARTIST_SONGS_COLLECTION_TYPE } from '../../core/artist/artistModel';
 import { collectQueuedKeys, findNowPlayingKey, projectCollectionTracks } from './bravaisProjection';
 import { describeBravaisTrack } from './describeBravaisTrack';
 import type { BravaisPlaylistScope } from './bravaisFormModel';
@@ -91,6 +93,7 @@ const BravaisCollection: React.FC<LibraryCollectionSurfaceProps> = ({
         sortField,
         sortDirection,
         playFiltered: actions.playScope,
+        shufflePlayFiltered: declaredActions.actions.includes('shuffle-scope') ? actions.shuffleScope : undefined,
         enqueueFiltered: actions.enqueueScope,
         collectFiltered: actions.capabilities.collect ? actions.collectScope : undefined,
         setSortField,
@@ -254,6 +257,7 @@ const BravaisCollection: React.FC<LibraryCollectionSurfaceProps> = ({
             onBack: () => latest.current.onBack(),
             onDone: () => latest.current.onDone(),
             onPlayScope: () => latest.current.actions.playScope(),
+            onShuffleScope: () => latest.current.actions.shuffleScope(),
             onEnqueueScope: () => latest.current.actions.enqueueScope(),
             clearFilter: () => latest.current.filter.setQuery(''),
         };
@@ -277,26 +281,48 @@ const BravaisCollection: React.FC<LibraryCollectionSurfaceProps> = ({
 
     const scopeEnabled = actions.capabilities.scope.enabled;
     const declaresScope = declaredActions.actions.includes('play-scope');
+    const declaresShuffleScope = declaredActions.actions.includes('shuffle-scope');
     const declaresEnqueueScope = declaredActions.actions.includes('enqueue-scope');
     // 专辑页的海报信息（左边的凝彩海报）：只有专辑类型的集合有，详情盖在集合描述上。
     const totalTracks = snapshot?.detail?.trackCount ?? collection.trackCount ?? allItems.length;
-    const seamAlbum = useMemo(() => projectBravaisSeamAlbum({
-        collection,
-        detail: snapshot?.detail,
-        trackCount: totalTracks,
-        labels: { kind: t('libraryBravais.kind.album'), trackCount: count => t('libraryBravais.trackCount', { count }) },
-    }), [collection, snapshot?.detail, t, totalTracks]);
+    // 专辑歌手可以点开歌手页（#1058）：能打开的（core/shared/collectionArtistLinks）交给宿主的 onOpenArtist（不带曲目，按这张专辑的来源打开）。
+    const declaresOpenArtist = declaredActions.actions.includes('open-artist');
+    const seamAlbum = useMemo(() => {
+        const album = projectBravaisSeamAlbum({
+            collection,
+            detail: snapshot?.detail,
+            trackCount: totalTracks,
+            labels: { kind: t('libraryBravais.kind.album'), trackCount: count => t('libraryBravais.trackCount', { count }) },
+            resolveOnlineArtist: resolveCollectionArtistCatalogId,
+        });
+        if (!album || !declaresOpenArtist || !album.artists.some(artist => artist.targetId !== undefined)) return album;
+        return {
+            ...album,
+            onOpenArtist: ({ name, targetId, catalogRef }: BravaisSeamAlbumArtist) => {
+                if (targetId === undefined) return;
+                latest.current.onOpenArtist(targetId, { name, ...(catalogRef ? { catalogRef } : {}) });
+            },
+        };
+    }, [collection, declaresOpenArtist, snapshot?.detail, t, totalTracks]);
+    // 歌手的「全部歌曲」（#918）：完整等级画成歌手海报的变体（大字是歌手名，热门三首换成歌曲总数）。
+    const seamArtistSongs = useMemo<BravaisSeamArtistSongs | undefined>(() => (
+        collection.type === ARTIST_SONGS_COLLECTION_TYPE
+            ? { name: collection.artists?.[0]?.name || displayTitle, coverUrl: collection.coverUrl, trackCount: totalTracks }
+            : undefined
+    ), [collection.artists, collection.coverUrl, collection.type, displayTitle, totalTracks]);
     const seam = useMemo<BravaisSeamModel>(() => ({
         title: displayTitle,
         crumb: displayTitle,
         // 过滤中显示「匹配 / 总数」（书脊上也是它）。
         meta: view.isFilterActive ? matchLabel : t('libraryBravais.trackCount', { count: allItems.length }),
         onPlayScope: declaresScope && scopeEnabled ? callbacks.onPlayScope : undefined,
+        onShuffleScope: declaresShuffleScope && scopeEnabled ? callbacks.onShuffleScope : undefined,
         onEnqueueScope: declaresEnqueueScope && scopeEnabled ? callbacks.onEnqueueScope : undefined,
         filter: seamFilter,
         collection: seamCollection,
         album: seamAlbum,
-    }), [seamAlbum, allItems.length, callbacks, declaresEnqueueScope, declaresScope, displayTitle, matchLabel, scopeEnabled, seamCollection, seamFilter, t, view.isFilterActive]);
+        artistSongs: seamArtistSongs,
+    }), [seamAlbum, seamArtistSongs, allItems.length, callbacks, declaresEnqueueScope, declaresScope, declaresShuffleScope, displayTitle, matchLabel, scopeEnabled, seamCollection, seamFilter, t, view.isFilterActive]);
 
     const layer = useMemo<BravaisLayer>(() => ({
         key: sessionKey,

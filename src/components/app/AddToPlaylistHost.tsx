@@ -12,6 +12,7 @@ import { useAddToPlaylistStore } from '../../stores/useAddToPlaylistStore';
 import { useLibraryStore } from '../../stores/useLibraryStore';
 import { useOnlineProviderAccountStore } from '../../stores/useOnlineProviderAccountStore';
 import { setStatusMessage } from '../../stores/useStatusMessageStore';
+import { onlineMutationFailureText } from '../../services/onlineMusic/failure/onlineMutationFailure';
 
 // src/components/app/AddToPlaylistHost.tsx
 // The playlist picker for the current song (and for the songs a scratchpad row or group, or a library
@@ -180,7 +181,8 @@ export const AddToPlaylistHost: React.FC<AddToPlaylistHostProps> = ({
             const playlists = songPlaylists.map((playlist: ProviderCollection): PlaylistEntry => ({
                 id: String(playlist.id),
                 name: playlist.name,
-                description: trackCount(playlist.trackCount || 0),
+                description: typeof playlist.trackCount === 'number' && Number.isFinite(playlist.trackCount) && playlist.trackCount >= 0
+                    ? `${playlist.trackCount} ${t('playlist.tracks')}` : undefined,
                 coverUrl: playlist.coverUrl,
             }));
             if (!canLike) return playlists;
@@ -238,7 +240,7 @@ export const AddToPlaylistHost: React.FC<AddToPlaylistHostProps> = ({
     // by the platform, or lose a song from the library under it), and the dialog closes as on success.
     const reportFailure = (error: unknown, text = t('status.playlistUpdateFailed')) => {
         console.warn('[AddToPlaylist] add failed', { count: targetSongs.length }, error);
-        setStatusMessage({ type: 'error', text });
+        setStatusMessage({ type: 'error', text: onlineMutationFailureText(error, text, t) });
     };
 
     // 星标这几首 Navidrome 歌，并写进播放页红心读的那个星标集合。

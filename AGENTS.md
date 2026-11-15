@@ -24,10 +24,11 @@
 
 ### 模块边界
 
-- **依赖方向**：`stores`、`utils`、`types`、`services` 不在运行时依赖 `components`；`utils` 也不依赖 `hooks`、`stores`；`types` 不依赖任何实现；`components`、`hooks`、`stores` 不直接用平台的 `*Provider.ts`、`*Transport.ts`。检查规则是 `dev/mcp/ts-code-map/codemap.mjs` 的 `BOUNDARY_RULES`，现有的违规列在 `docs/CODEMAP.md` 的“分层边界违规”，不再加新的。
+- **依赖方向**：`stores`、`utils`、`types`、`services` 不在运行时依赖 `components`；`utils` 也不依赖 `hooks`、`stores`；`types` 不依赖任何实现；`components`、`hooks`、`stores` 不直接用平台的 `*Provider.ts`、`*Transport.ts`。检查规则是 `dev/dedicatus/rules.mjs` 的 `BOUNDARY_RULES`（Dedicatus，`npm run dedicatus`，CI 上也跑）；现有的违规和循环依赖记在 `dev/dedicatus/baseline.json`，只减不增：修好一条就 `npm run dedicatus -- --prune` 删掉，不往里加新的。
 - **在线歌曲只走 omni。** 搜索、播放、歌词、歌单、账户都调 `src/services/onlineMusic/omni.ts`；只有各平台的 `<id>Provider.ts` 和 `<id>Transport.ts` 碰平台的原始接口（网易云没有 Transport，请求在 `src/services/onlineMusic/netease/netease.ts`）。omni 缺一项能力时，在 `src/types/onlineMusic.ts` 和 `omni.ts` 加上，再在各平台实现，不另开旁路。细则见 `online-song-omni-routing`。
 - **一个平台的规则留在那个平台的目录里。** 只是看着像的不要合并成共用规则。平台目录外每个文件提到平台名的次数记在 `test/unit/onlineMusic/platformNamePlaces.ts`，`test/unit/onlineMusic/omniArchitecture.test.ts` 核对它。
 - **加一个同类的东西只动它自己的目录和注册点**：歌词样式和背景放各自的 `entry.tsx`，由 registry 自动发现；平台在 `providerRegistry.ts` 登记；命令放 `src/components/command-palette/commands/`，一组命令一个 `<组>Commands.ts`，自带界面的单条命令一个 `*Command.ts`，都用 `commandFactories.ts` 里的函数建，切换歌词样式的命令写在那个样式的 `entry.tsx` 里。不在 `App.tsx` 里加分支。衡量一个模块看“再加一个平台、一个歌词样式、一种模组要改哪些地方”。
+- **账号凭据只在登记过的入口写。** 处理一般响应的代码不改登录账号。代表“谁登录着”的 token、userid、cookie 只在小而专一的函数里写：要么只在确认的登录（或同一会话的续期）之后调用，要么函数自己挡掉账号项。写入点登记在 `dev/dedicatus/credentialWriters.mjs`，Dedicatus D604 检查渲染进程经 `providerStorage` 的写入和酷狗桥接层的会话对象；其他平台主进程里的会话仓库还没纳入检查，照同样的规矩写。
 - **渲染进程只经 `electron/preload.cjs` 暴露的接口找主进程。** 窗口都开 `contextIsolation`、关 `nodeIntegration`。
 
 ### 命名
@@ -41,6 +42,7 @@
 - 几个功能之间共用的类型（契约）放 `src/types.ts`（全局设置）和 `src/types/`（如 `onlineMusic.ts`）；只给一个功能用的类型放在那个功能的目录里。
 - TypeScript 开着 `strict`；类型检查跑 `npm run typecheck`。
 - 仓库没有自动格式化工具：4 个空格缩进、单引号；文件用 LF 换行、末尾留一个换行（这两条写在 `.editorconfig`）。
+- ESLint 检查这些格式和更多规则（`typescript-eslint` 的 strictTypeChecked、react-hooks、项目约定）：先 `npm run lint:install`（装在 `dev/dedicatus/lint/` 的隔离环境里），再 `npm run lint`。旧代码的违规记在 `eslint-suppressions.json`，只减不增：修好后跑 `npm run lint:prune`，不要往里加。问题按 Dedicatus 的代码（如 `D401`）报，含义见 `dev/dedicatus/codes.mjs`。
 
 ### 注释
 
@@ -56,7 +58,8 @@
 ### 存下来的数据
 
 - 设置值放在 `src/stores/` 对应领域的 `use*SettingsStore` 里，组件里不另起一套 localStorage 读写。新写的读写用 `src/stores/storagePrimitives.ts`；一些旧文件还直接调 localStorage。
-- 已经发布的存储键不改名。`src/stores/` 和各样式 `tuning.ts` 里的键由 `test/unit/stores/storeContract.test.ts` 记着快照；别处的键没有测试钉住，同样不改名。
+- 已经发布的存储键不改名。`src/stores/` 和各样式 `tuning.ts` 里的键由 `test/unit/stores/storeContract.test.ts` 记着快照；全仓的键（含平台会话、主进程 electron-store）登记在 `dev/dedicatus/storageKeys.mjs`（D507），新键追加进去。外观类 store 的新键还要在 `dev/dedicatus/appearanceDestinations.mjs` 写明进不进配置导入导出（D511）。
+- 主进程新加 IPC 通道，先在 `dev/dedicatus/ipcChannels.mjs` 登记信任级别（D605）。
 
 ### 日志
 
@@ -97,6 +100,7 @@
 - `online-song-omni-routing`：在线歌曲的搜索、播放、歌词、歌单、账户和跨平台数据流都经过 Omni，只有平台的 adapter 和 transport 直接接触原始接口。
 - `kugou-provider-alignment`：开发时按 `docs/ku-go-api-docs.md`、`.env.local` 中的真实酷狗服务和 `.dev-credentials/kugou.json` 对齐酷狗 provider 的请求与响应，不猜接口结构。
 - `prepare-folia-release`：稳定版本发布流程：汇总上个稳定版本以来用的人能感到的变化，更新新功能介绍、桌面与 Docker 版本号，并生成可手动粘贴的 Markdown release note。
+- `coven-supervisor`：维护者让 Coven 处理一个范围（v1 只做“按 Dedicatus 基线重构”）时，本 session 当监控者：认领、交 planner 写契约、递给维护者批准、派 generator 工作 session、每轮新开 evaluator 评审、开指向集成分支的 PR、收尾；写 GitHub 只走 coven 的脚本（harness 在 `packages/coven/`，不依赖 Folia；Folia 的适配层在 `dev/coven/`）。
 - `run-desktop`：启动并驱动 Electron 桌面版（隔离的 profile，后台驱动加单条命令的客户端：截图、点击、填表、在页面和主进程里求值、读日志），在真的桌面构建里验证主进程、preload IPC 和桌面专属设置的改动。
 
 四份开发者指南：
@@ -130,3 +134,9 @@
   - **架构约束**：上游新增 `test/unit/onlineMusic/omniArchitecture.test.ts`（平台名不得散落到平台目录之外）。本地解锁特性已把 `isNeteaseTrialAudioUrl` 移进 `netease/`，并在 `test/unit/onlineMusic/platformNamePlaces.ts` 登记了 `unlockService` / `kuwoClient` / `kuwoSign` 与几处开关文案的额度及理由。
   - **设置页**：`PlaybackSettingsSubview` 被上游删除，解锁三项改为 `modal/settings/pages/PlaybackPage.tsx` 的「VIP 歌曲解锁」分组（`SettingsGroupDef` + `option()`），锚点 `unlockVipSongs` 已在 `settingsAnchorModel.ts` 登记为 `playback`。
   - **验证**：vitest 全量 1094/1096 文件、13798 测试通过；剩余 4 个失败在 `modExportWait.test.ts`，在干净的上游树上同样失败（与本合并无关）。本机 Termux 上部分重型测试（`omniArchitecture`、`hanabiFireworks`、`kowloon`、`foliumHelpers`）默认 5s 超时会超时，加 `--testTimeout=60000` 后全部通过。
+- 2026-11-09 已同步上游 main（9777d2ac，v0.7.26-v0.7.28）；档子由 0.7.25 升到 0.7.28，合入 521 个提交。上游这一轮没有结构性重构，本地特性原样保留，冲突只出现在登记表、i18n 与测试 mock 上：
+  - VIP 解锁 / 无版权替代 / 酷我直连仍在原位置（`unlockService.ts`、`kuwoClient.ts`、`utils/kuwoSign.ts`、`netease/{netease,neteaseProvider}.ts`），手机号/Cookie 登录仍不移植（上游没有对应接口）。
+  - 上游给 omni 加了外部播放（`canPlayExternally` / `beginExternalPlayback` 等），受影响测试的 omni mock 改为上游版本并在 `songAvailability` mock 里补回 `shouldAutoReplaceUnavailableSong`。
+  - 本地解锁的存储键登记进 `dev/dedicatus/storageKeys.mjs`（D507）：`web:unlock_vip_songs`、`web:unlock_unavailable_songs`、`web:unlock_use_cross_provider_fallback`。
+  - `exploreFeedMemory` 移到 `src/stores/`，`platformNamePlaces.ts` 里旧路径的条目删掉。
+  - 验证：vitest 全量 1212/1214 文件、15277 测试通过（`--testTimeout=60000`）；剩余 4 个失败在 `modExportWait.test.ts`，干净上游树上同样失败。类型检查仅剩 `binaryAssetStore` 的 `FileSystemDirectoryHandle.values` 一处（TS 5.9 lib 差异）。

@@ -43,6 +43,7 @@ const O = {
     unlockUnavailable: option(UNLOCK, 'unlockUnavailableSongs', 'options.unlockUnavailableSongs'),
     queueBehavior: option(BEHAVIOR, 'queueDefaultBehavior', 'options.queueDefaultBehavior'),
     autoSkipUnplayable: option(BEHAVIOR, 'autoSkipUnplayable', 'options.autoSkipUnplayable'),
+    shuffleRoundNoRepeat: option(BEHAVIOR, 'shuffleRoundNoRepeat', 'options.shuffleRoundNoRepeat'),
     preventSleep: option(BEHAVIOR, 'preventDisplaySleepDuringPlayback', 'options.preventDisplaySleepDuringPlayback', { electronOnly: true }),
     voiceInputPause: option(BEHAVIOR, 'voiceInputPause', 'options.voiceInputPause', { electronOnly: true, available: () => runsOnWindows() }),
 };
@@ -82,6 +83,7 @@ const PlaybackPage: React.FC = () => {
         transcode: state.enableTranscodeFallback,
         queueBehavior: state.queueAddBehavior,
         autoSkipUnplayable: state.autoSkipUnplayable,
+        shuffleRoundNoRepeat: state.shuffleRoundNoRepeat,
         setMediaCache: state.handleToggleMediaCache,
         setFade: state.handleTogglePlaybackFade,
         setTranscode: state.handleToggleTranscodeFallback,
@@ -93,6 +95,7 @@ const PlaybackPage: React.FC = () => {
         setUnlockVip: state.handleToggleUnlockVipSongs,
         setUnlockCross: state.handleToggleUnlockUseCrossProviderFallback,
         setUnlockUnavailable: state.handleToggleUnlockUnavailableSongs,
+        setShuffleRoundNoRepeat: state.handleToggleShuffleRoundNoRepeat,
     })));
     const preventSleep = useDesktopSettingsStore(state => state.preventDisplaySleepDuringPlayback);
     const setPreventSleep = useDesktopSettingsStore(state => state.handleTogglePreventDisplaySleepDuringPlayback);
@@ -250,6 +253,9 @@ const PlaybackPage: React.FC = () => {
                 </Row>
                 <Row option={O.autoSkipUnplayable} note={t('options.autoSkipUnplayableDesc')}>
                     <Toggle checked={audio.autoSkipUnplayable} onChange={audio.setAutoSkipUnplayable} />
+                </Row>
+                <Row option={O.shuffleRoundNoRepeat} note={t('options.shuffleRoundNoRepeatDesc')}>
+                    <Toggle checked={audio.shuffleRoundNoRepeat} onChange={audio.setShuffleRoundNoRepeat} />
                 </Row>
                 {isElectron && (
                     <Row option={O.preventSleep} hint={t('options.preventDisplaySleepDuringPlaybackDesc')}>

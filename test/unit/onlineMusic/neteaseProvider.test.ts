@@ -22,6 +22,7 @@ vi.mock('@/services/onlineMusic/netease/netease', async importOriginal => ({
         getAlbum: vi.fn(),
         getArtistDetail: vi.fn(),
         getArtistAlbums: vi.fn(),
+        getArtistSongs: vi.fn(),
         getPersonalizedPlaylists: vi.fn(),
         getLikedSongs: vi.fn(),
         getUserPlaylists: vi.fn(),
@@ -124,6 +125,38 @@ describe('neteaseProvider', () => {
         const page = await neteaseProvider.search!.searchSongs('song', 1, 0);
         expect(page.items[0].sourceRef).toEqual({ kind: 'online', providerId: 'netease', mediaId: '42' });
         expect(page).toMatchObject({ total: 2, hasMore: true, nextOffset: 1 });
+    });
+
+    // 歌手的 tns / alias 取自 2026-11-05 cloudsearch type 1 的实测回答。
+    it('keeps the other spelling of the artists from cloudsearch for the lyric search', async () => {
+        const withArtists = (ar: Array<{ name: string; tns?: string[]; alias?: string[] }>) => ({
+            ...song, sourceRef: undefined, ar, artists: ar.map((artist, index) => ({ id: index, name: artist.name })),
+        });
+        vi.mocked(neteaseApi.cloudSearch).mockResolvedValue({
+            result: {
+                songs: [
+                    withArtists([{ name: '陈奕迅', tns: [], alias: ['Eason Chan'] }]),
+                    withArtists([{ name: 'Oasis', tns: ['绿洲乐队'], alias: [] }]),
+                    // 王菲的 alias 先列旧名「王靖雯」：要的是另一种文字的写法。
+                    withArtists([{ name: '王菲', tns: [], alias: ['王靖雯', 'Faye Wong', 'Shirley Wong'] }, { name: '那英', tns: [], alias: [] }]),
+                    withArtists([{ name: '周杰伦', tns: [], alias: ['周董'] }]),
+                ],
+                songCount: 4,
+            },
+        } as any);
+        const page = await neteaseProvider.search!.searchSongs('song', 4, 0);
+        const other = (index: number) => neteaseProvider.lyrics!.getAlternateArtistName!(page.items[index]);
+
+        await expect(other(0)).resolves.toBe('Eason Chan');
+        await expect(other(1)).resolves.toBe('绿洲乐队');
+        await expect(other(2)).resolves.toBe('Faye Wong, 那英');
+        await expect(other(3)).resolves.toBeNull();
+        expect(page.items[3].sourceRef).toEqual({ kind: 'online', providerId: 'netease', mediaId: '42' });
+        // 缓存水合：正规化过的歌曲再正规化一次，另一种写法还在。
+        const hydrated = neteaseProvider.normalizeSong!(page.items[0]);
+        expect(hydrated.sourceRef).toEqual(page.items[0].sourceRef);
+        expect(hydrated.sourceRef).toMatchObject({ providerData: { otherArtistNames: 'Eason Chan' } });
+        await expect(neteaseProvider.lyrics!.getAlternateArtistName!(song)).resolves.toBeNull();
     });
 
     // 字段取自 2026-10-31 cloudsearch type 10 / 1000 的实测回答（裁剪过）。
@@ -248,6 +281,18 @@ describe('neteaseProvider', () => {
             publishedAt: 1704067200000,
             publisher: 'Publisher',
         });
+    });
+
+    it("pages an artist's songs with the whole count NetEase answers (#918)", async () => {
+        vi.mocked(neteaseApi.getArtistSongs).mockResolvedValue({ songs: [{ id: 1, name: 'One', ar: [], al: { id: 0, name: '' } }], more: true, total: 418 } as any);
+        await expect(neteaseProvider.catalog!.getArtistSongs!(9, 50, 50)).resolves.toMatchObject({ hasMore: true, nextOffset: 51, total: 418 });
+        expect(neteaseApi.getArtistSongs).toHaveBeenCalledWith(9, 50, 50);
+
+        // 没给总数（或给的不是正数）时不编一个出来：补页照 more 走。
+        vi.mocked(neteaseApi.getArtistSongs).mockResolvedValue({ songs: [], more: false, total: '0' } as any);
+        const page = await neteaseProvider.catalog!.getArtistSongs!(9, 50, 0);
+        expect(page.total).toBeUndefined();
+        expect(page.hasMore).toBe(false);
     });
 
     it('reads an album as an album whatever release type NetEase gives it', async () => {

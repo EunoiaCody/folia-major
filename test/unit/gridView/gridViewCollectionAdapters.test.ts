@@ -443,6 +443,11 @@ describe('gridViewCollectionAdapters', () => {
         expect(refreshLocalGridViewCollection(descriptor, songs, catalog)).toMatchObject({
             albumArtist: 'Artist A, Artist B',
             description: 'Artist A, Artist B',
+            // 带实体 id，专辑页头的歌手名可以点开歌手页（#1058）。
+            artists: [
+                { id: 'artist-a', entityId: 'artist-a', name: 'Artist A' },
+                { id: 'artist-b', entityId: 'artist-b', name: 'Artist B' },
+            ],
         });
     });
 
@@ -608,6 +613,41 @@ describe('resolveNavidromeGridViewTracks', () => {
         const whole = await read('artist');
         expect(whole.failed).toBe(false);
         expect(whole.tracks).toHaveLength(2);
+    });
+
+    // #1039: opened from a song, the album descriptor has only an id and a name; the page header takes the rest from here.
+    it('gives the information of an album that was read', async () => {
+        serve({
+            getAlbum: ok({
+                album: {
+                    id: 'one', name: 'Rebirth', artist: 'Hisa Knowledge', coverArt: 'al-one', songCount: 6,
+                    duration: 1500, year: 2015, genre: 'Touhou', song: [song('a')],
+                },
+            }),
+        });
+        const { detail } = await read('album');
+        expect(detail).toMatchObject({
+            id: 'one', name: 'Rebirth', type: 'album', description: 'Hisa Knowledge', trackCount: 6,
+            albumArtist: 'Hisa Knowledge', albumYear: 2015, albumGenre: 'Touhou', albumDuration: 1500,
+            publishedAt: new Date(2015, 0, 1).getTime(),
+        });
+        expect(detail?.coverUrl).toContain('getCoverArt');
+        expect(detail?.coverUrl).toContain('id=al-one');
+    });
+
+    // #1058：专辑歌手带 id，页头的歌手名可以点开歌手页；OpenSubsonic 的 artists 优先，老服务器用 artistId。
+    it('gives the album artists with their ids', async () => {
+        serve({ getAlbum: ok({ album: { id: 'one', name: 'Rebirth', artist: 'Hisa Knowledge', artistId: 'ar-1', song: [song('a')] } }) });
+        expect((await read('album')).detail?.artists).toEqual([{ id: 'ar-1', name: 'Hisa Knowledge' }]);
+        serve({
+            getAlbum: ok({ album: {
+                id: 'one', name: 'Split', artist: 'A • B', artistId: 'ar-a',
+                artists: [{ id: 'ar-a', name: 'A' }, { id: 'ar-b', name: 'B' }], song: [song('a')],
+            } }),
+        });
+        expect((await read('album')).detail?.artists).toEqual([{ id: 'ar-a', name: 'A' }, { id: 'ar-b', name: 'B' }]);
+        serve({ getAlbum: ok({ album: { id: 'one', name: 'Nobody', song: [song('a')] } }) });
+        expect((await read('album')).detail?.artists).toBeUndefined();
     });
 
     it('says the read failed when no server is set up', async () => {

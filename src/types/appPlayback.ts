@@ -15,6 +15,8 @@ import type { MediaId } from './onlineMusic';
 // Shared playback-specific types extracted from App.tsx.
 export type PlaybackNavigationOptions = {
     shouldNavigateToPlayer?: boolean;
+    /** Manual queue steps show preparation feedback even when their media was prefetched. */
+    manualQueueStep?: boolean;
     unavailableSkipCount?: number;
     unifiedQueue?: SongResult[];
     /**
@@ -51,6 +53,12 @@ export type PlaybackNavigationOptions = {
 
 export type NextTrackOptions = PlaybackNavigationOptions & {
     allowStopOnMissing?: boolean;
+    /**
+     * Set only by the audio element's `ended`: the step comes because the track played to its end.
+     * Only then does stopping on the last track count as the queue having played out (a scene's
+     * queueEnd); a skip after a failure or an audio error that finds no next track stops without it.
+     */
+    playedToEnd?: boolean;
     /**
      * The track to step from, when it is deliberately NOT the one the listener can see.
      *
@@ -135,6 +143,8 @@ export type WindowPlaybackHandoff = {
     activePlaybackContext: 'main' | 'stage';
     mainPlayback: PlaybackSnapshot | null;
     activePlayback: PlaybackSnapshot | null;
+    /** Provider id → the extra radio on air in it, while FM plays: which radio the queue came from. Its mode choice is not carried. */
+    fmStations?: Record<string, string>;
     stage: WindowPlaybackHandoffStageState;
     nowPlaying: WindowPlaybackHandoffNowPlayingState;
     ui: WindowPlaybackHandoffUiState;
