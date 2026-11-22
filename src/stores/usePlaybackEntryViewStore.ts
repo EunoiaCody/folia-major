@@ -41,8 +41,15 @@ const ENTRY_VIEW_CHOSEN_KEY = 'playback_entry_view_chosen';
  */
 const LIBRARY_SUITE_PROMPT_SEEN_KEY = 'library_suite_prompt_seen';
 
-/** The pages the startup prompt can show, in order. */
-export type StartupPromptPage = 'library-suite' | 'playback-entry-view';
+/**
+ * The pages the startup prompt can show, in order. `sources` (Folium 2.0 plan §5.3) is asked of a fresh desktop
+ * profile once; whether it is owed and its answer live in the main process, not here
+ * (components/modal/playback-entry-view/sourcesOnboarding.ts).
+ */
+export type StartupPromptPage = 'sources' | 'library-suite' | 'playback-entry-view';
+
+/** What the assembly layer knows about the pages this store does not keep the answers of. */
+export type StartupPromptOptions = { withSources?: boolean; withLibrarySuite?: boolean };
 
 const readEntryView = (): PlaybackEntryView => {
     const stored = getStoredString(ENTRY_VIEW_KEY, 'player');
@@ -58,27 +65,17 @@ export type PlaybackEntryViewState = {
     isPlaybackEntryViewPromptOpen: boolean;
     /** The pages of the prompt that is open (empty while closed); fixed for one opening. */
     promptPages: readonly StartupPromptPage[];
-    /**
-     * Non-zero while the "Lattice cannot host Personal FM" notice is up, and a different value on
-     * every raise so a repeat restarts its own timer.
-     *
-     * Deliberately not a status toast: starting FM fills that single-slot channel with the song
-     * fetch and the lyric match, either of which would cut this explanation short.
-     */
-    latticeFmNoticeToken: number;
 
     setPlaybackEntryView: (view: PlaybackEntryView) => void;
     /**
-     * Opens the prompt with the pages still unanswered: the library-interface page when `withLibrarySuite`
-     * (both suites exist in this build) and it has not been shown yet, the playback page when that has not been
-     * chosen. Returns whether it opened (nothing left to ask → false).
+     * Opens the prompt with the pages still unanswered: the sources page when `withSources` (the main process says a
+     * fresh profile owes it), the library-interface page when `withLibrarySuite` (both suites exist in this build)
+     * and it has not been shown yet, the playback page when that has not been chosen. Returns whether it opened
+     * (nothing left to ask → false).
      */
-    requestPlaybackEntryViewPrompt: (options?: { withLibrarySuite?: boolean }) => boolean;
+    requestPlaybackEntryViewPrompt: (options?: StartupPromptOptions) => boolean;
     /** Closes the prompt and records both questions as answered, so it never opens again. */
     closePlaybackEntryViewPrompt: () => void;
-    /** Raises the FM notice, restarting it if one is already showing. */
-    showLatticeFmNotice: () => void;
-    dismissLatticeFmNotice: () => void;
 };
 
 export const usePlaybackEntryViewStore = create<PlaybackEntryViewState>((set, get) => ({
@@ -87,7 +84,6 @@ export const usePlaybackEntryViewStore = create<PlaybackEntryViewState>((set, ge
     hasSeenLibrarySuitePrompt: getStoredBoolean(LIBRARY_SUITE_PROMPT_SEEN_KEY, false),
     isPlaybackEntryViewPromptOpen: false,
     promptPages: [],
-    latticeFmNoticeToken: 0,
 
     // Picking a view *is* answering the question, wherever it is picked, so this also retires the
     // prompt: someone who set it in the options should not be asked about it again afterwards.
@@ -98,12 +94,13 @@ export const usePlaybackEntryViewStore = create<PlaybackEntryViewState>((set, ge
         setStoredBoolean(ENTRY_VIEW_CHOSEN_KEY, true);
         set({ playbackEntryView: view, hasChosenPlaybackEntryView: true });
     },
-    requestPlaybackEntryViewPrompt: ({ withLibrarySuite = false } = {}) => {
+    requestPlaybackEntryViewPrompt: ({ withSources = false, withLibrarySuite = false } = {}) => {
         const state = get();
         if (state.isPlaybackEntryViewPromptOpen) {
             return false;
         }
         const pages: StartupPromptPage[] = [];
+        if (withSources) pages.push('sources');
         if (withLibrarySuite && !state.hasSeenLibrarySuitePrompt) pages.push('library-suite');
         if (!state.hasChosenPlaybackEntryView) pages.push('playback-entry-view');
         if (pages.length === 0) {
@@ -117,18 +114,9 @@ export const usePlaybackEntryViewStore = create<PlaybackEntryViewState>((set, ge
         setStoredBoolean(LIBRARY_SUITE_PROMPT_SEEN_KEY, true);
         set({ isPlaybackEntryViewPromptOpen: false, hasChosenPlaybackEntryView: true, hasSeenLibrarySuitePrompt: true });
     },
-    // Date.now() rather than a counter so the token also changes when the notice is raised again
-    // while still on screen, which is what restarts the dismissal timer.
-    showLatticeFmNotice: () => set({ latticeFmNoticeToken: Date.now() }),
-    dismissLatticeFmNotice: () => set({ latticeFmNoticeToken: 0 }),
 }));
 
 /** Module-level handle for the assembly layer; it is an action, so it needs no subscription. */
-export const requestPlaybackEntryViewPrompt = (options?: { withLibrarySuite?: boolean }) => (
+export const requestPlaybackEntryViewPrompt = (options?: StartupPromptOptions) => (
     usePlaybackEntryViewStore.getState().requestPlaybackEntryViewPrompt(options)
-);
-
-/** Module-level handle for the playback controller, which is not a component. */
-export const showLatticeFmNotice = () => (
-    usePlaybackEntryViewStore.getState().showLatticeFmNotice()
 );

@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback, useMemo, lazy, Suspense } from 'react';
-import { AnimatePresence, motion, useMotionValueEvent } from 'framer-motion';
+import { AnimatePresence, motion } from 'framer-motion';
 import { useTranslation } from 'react-i18next';
 import { ChevronLeft } from 'lucide-react';
 import { loadCachedOrFetchCover } from './services/coverCache';
@@ -20,6 +20,7 @@ import { useProviderSignOut } from './components/app/dialogs/useProviderSignOut'
 import LoginHost from './components/login/LoginHost';
 import { useSettingsDialogModel } from './components/app/dialogs/useSettingsDialogModel';
 import AppOverlays from './components/app/overlays/AppOverlays';
+import SurfacePlaybackHost from './components/app/playback/surface/SurfacePlaybackHost';
 import PonderHost from './components/ponder/PonderHost';
 // Lazy so animejs (~38KB gz) stays out of the bootstrap chunk: this overlay only ever draws when the
 // animation switch is on AND the mode is automix, both off by default, so it is mounted only then.
@@ -32,7 +33,6 @@ import { UserGuideModal } from './components/modal/UserGuideModal';
 import ReleaseNotesDialog from './components/modal/ReleaseNotesDialog';
 import LegacyModelsPrompt from './components/modal/LegacyModelsPrompt';
 import { PlaybackEntryViewPrompt } from './components/modal/playback-entry-view/PlaybackEntryViewPrompt';
-import { LatticeFmNotice } from './components/modal/playback-entry-view/LatticeFmNotice';
 import { useStartupExperienceGate } from './hooks/useStartupExperienceGate';
 import { useAppDialogsModel } from './components/app/dialogs/useAppDialogsModel';
 import { useHomeModel } from './components/app/home/useHomeModel';
@@ -50,12 +50,12 @@ import { useWallHandoffDirector } from './components/app/presentation/wallHandof
 import WallToolsDockHost from './components/wall/WallToolsDock';
 import { buildPlayerViewFlags } from './components/app/presentation/buildPlayerViewFlags';
 import { buildVisualizerTheme } from './components/app/presentation/buildVisualizerTheme';
+import { AutoLyricSegmentationHost } from './components/app/playback/AutoLyricSegmentationHost';
 import { createCoverUrlResolver } from './components/app/playback/createCoverUrlResolver';
 import { createLyricsSetter } from './components/app/playback/createLyricsSetter';
 import { createLyricSegmentationActions } from './components/app/playback/createLyricSegmentationActions';
 import { useLyricWordSegmentation } from './hooks/useLyricWordSegmentation';
 import { useIcuFoliaSegmentation } from './hooks/useIcuFoliaSegmentation';
-import { useAutoLyricSegmentation } from './hooks/useAutoLyricSegmentation';
 import { handleOnlineMediaFailure } from './components/app/playback/handleOnlineMediaFailure';
 import { createOnlineRecoveryController } from './components/app/playback/restore/createOnlineRecoveryController';
 import { notePreviewPlaying } from './components/app/playback/source/previewNotice';
@@ -63,6 +63,7 @@ import { persistPlaybackCache } from './components/app/playback/persistPlaybackC
 import { useAppOverlaysModel } from './components/app/overlays/useAppOverlaysModel';
 import { resolveNextUpTrack } from './components/app/overlays/now-playing-toast/resolveNextUpTrack';
 import { shouldShowNowPlayingToast } from './components/app/overlays/now-playing-toast/nowPlayingToastVisibility';
+import { TrackEndCountdownHost } from './components/app/overlays/now-playing-toast/TrackEndCountdownHost';
 import { isWallLibrarySuite, useActiveLibrarySuiteId } from './library/app/librarySuiteChoice';
 import {
     createSearchAlbumCollection,
@@ -75,14 +76,13 @@ import { Album, Artist, LyricData, Theme, PlayerState, SongResult, ReplayGainMod
 import type { LocalSong } from './types';
 import { getLocalSongArrayBuffer } from './services/localMusicService';
 import { registerLocalTrackFileReader } from './services/analysis/trackAudio';
-import type { MediaId, ProviderCollection } from './types/onlineMusic';
+import type { MediaId } from './types/onlineMusic';
 import { resolveSongCatalogRef } from './services/onlineMusic/catalogRefs';
 import { omni } from './services/onlineMusic/omni';
 import { consumeProgrammaticPause, playbackFade } from './services/playbackFade';
 import { getSongAlbumLabel, getSongArtistLabel, getSongCoverUrl } from './services/onlineMusic/songMetadata';
 import { isNavidromeEnabled } from './services/navidromeService';
 import { useAppNavigation } from './hooks/useAppNavigation';
-import { useNeteaseLibrary } from './hooks/useNeteaseLibrary';
 import { useLibraryAccountController } from './library/app/useLibraryAccountController';
 import { createLibraryAccountSwitchCleanupPort } from './library/app/createLibraryAccountPort';
 import { useAppWallToolsHost } from './components/app/wall-tools/useAppWallToolsHost';
@@ -104,6 +104,7 @@ import { useHifiMediaSessionKeepAlive } from './components/hifi/useHifiMediaSess
 import { useHifiMpris } from './components/hifi/useHifiMpris';
 import { useHifiWebRouteNotice } from './components/hifi/useHifiWebRouteNotice';
 import { isHifiRoute, useHifiTrackStore } from './services/hifi/hifiPlayback';
+import { useStemMixer } from './services/stemMixer/useStemMixer';
 import { hifiEngine } from './services/hifi/hifiEngine';
 import { selectHifiEngineConfig, useHifiSettingsStore } from './stores/useHifiSettingsStore';
 import { useElectronDisplaySleepBlocker } from './hooks/useElectronDisplaySleepBlocker';
@@ -142,10 +143,11 @@ import { useStagePlaybackController } from './components/app/playback/useStagePl
 import { useSongThemeAutoGeneration } from './hooks/useSongThemeAutoGeneration';
 import { useThemeController } from './hooks/useThemeController';
 import { useOnlineSongMetadataHydration } from './hooks/useOnlineSongMetadataHydration';
-import { resolveCommandPaletteSearchSource, resolveSearchSource, useSearchNavigationStore } from './stores/useSearchNavigationStore';
+import { isLibrarySearchCollection, resolveCommandPaletteSearchSource, resolveSearchSource, type SearchCollectionResult, useSearchNavigationStore } from './stores/useSearchNavigationStore';
 import { useOnlineProviderAccountStore } from './stores/useOnlineProviderAccountStore';
 import { useShallow } from 'zustand/react/shallow';
 import { clampMediaVolume, toSafeRemoteUrl } from './utils/appPlaybackHelpers';
+import { shownLoopMode } from './utils/loopMode';
 import { hasLoopedToStart } from './services/playedTrackCache';
 import { getOnlineProviderIdForSong, isLocalPlaybackSong, isNavidromePlaybackSong, isStagePlaybackSong } from './utils/appPlaybackGuards';
 import { writeLyricOffset } from './utils/lyrics/lyricOffsetMemory';
@@ -205,8 +207,6 @@ const DEV_DEBUG_SHORTCUT_LABEL = 'Alt+Shift+D';
 const ONLINE_AUDIO_URL_TTL_MS = 1200 * 1000;
 const ONLINE_AUDIO_URL_REFRESH_BUFFER_MS = 60 * 1000;
 const LOCAL_TAIL_DECODE_ERROR_TOLERANCE_SEC = 3;
-/** How many seconds before a track ends the now playing card previews the queue's next track. */
-const NEXT_UP_LEAD_SEC = 5;
 
 export default function App() {
     countRender('App');
@@ -567,7 +567,8 @@ export default function App() {
     // control below keeps editing the per-song value alone.
     const effectiveLyricTimelineOffsetMs = lyricTimelineOffsetMs + globalLyricTimelineOffsetMs;
 
-    const effectiveLoopMode: StageLoopMode = loopMode;
+    // Personal FM shows loop-all as off (nothing to go round to); single loop works there as anywhere.
+    const effectiveLoopMode: StageLoopMode = shownLoopMode(loopMode, isFmMode);
 
     const getTargetPlaybackVolume = useCallback(() => (isMuted ? 0 : volume), [isMuted, volume]);
 
@@ -768,14 +769,6 @@ export default function App() {
         loadMoreSearchResults: state.loadMoreSearchResults,
     })));
 
-    // Netease Library Hook
-    // the NetEase account as the account store holds it
-    const {
-        user,
-        playlists,
-        cloudPlaylist,
-    } = useNeteaseLibrary();
-
     // Every platform's account is read and signed out of through omni (services/onlineMusic/account/),
     // NetEase like the others.
     // 在线账户 controller（Library v2 · A4）：登录、选平台、切换确认与登出都在 core，App 只交出退出与退出前的那一问
@@ -863,7 +856,6 @@ export default function App() {
         toggleTransparentModeWithHandoff,
     } = useElectronWindowPlaybackHandoff({
         isElectronWindow,
-        userId: user?.id,
         navigateToPlayer,
         audioRef,
         mainPlaybackSnapshotRef,
@@ -908,12 +900,10 @@ export default function App() {
         openLyricMatch,
         closeLyricMatch,
         loadLocalSongs,
-        loadLocalPlaylists,
+        loadFoliaPlaylists,
         onRefreshLocalSongs,
-        isLocalSongLiked,
-        saveCurrentQueueAsLocalPlaylist,
-        addPickedSongsToLocalPlaylist,
-        createLocalPlaylistWithSongs,
+        isFoliaSongLiked,
+        saveCurrentQueueAsPlaylist,
         addPickedSongsToOnlinePlaylist,
         createOnlinePlaylistWithSongs,
         addPickedSongsToNavidromePlaylist,
@@ -935,7 +925,6 @@ export default function App() {
         handleAutoMatchBestLyricForCurrentSong,
         handleLike,
     } = useLibraryPlaybackController({
-        userId: user?.id,
         setLyrics,
         setIsLyricsLoading,
         lyricsLoadingWritesRef,
@@ -951,7 +940,6 @@ export default function App() {
     });
 
     useSessionRestoreController({
-        userId: user?.id,
         blobUrlRef,
         currentOnlineAudioUrlFetchedAtRef,
         setLyrics,
@@ -959,7 +947,7 @@ export default function App() {
         persistLastPlaybackCache,
         clearPersistedStagePlaybackCache,
         loadLocalSongs,
-        loadLocalPlaylists,
+        loadFoliaPlaylists,
         canRestoreSession: windowPlaybackHandoffRestoreStatus === 'none',
         shouldAutoPlayRef: shouldAutoPlay,
     });
@@ -993,8 +981,7 @@ export default function App() {
         t,
         queueAddBehavior,
         audioQuality,
-        userId: user?.id,
-    }), [currentSong, playQueue, persistLastPlaybackCache, t, queueAddBehavior, audioQuality, user?.id]);
+    }), [currentSong, playQueue, persistLastPlaybackCache, t, queueAddBehavior, audioQuality]);
 
     // --- Effects ---
 
@@ -1032,8 +1019,8 @@ export default function App() {
         isNowPlayingStageActive,
         shouldNavigateToPlayerOnTrackChange: currentView !== 'lattice',
         localSongs,
+        localPlaylists,
         localLibraryCatalog,
-        userId: user?.id,
         setLyrics,
         setIsLyricsLoading,
         navigateToPlaybackView,
@@ -1094,14 +1081,18 @@ export default function App() {
         }
         setStatusMsg({ type: 'error', text: t('search.catalogUnavailable') });
     }, [navigateToCollection, setStatusMsg, t]);
-    const handleSearchResultCollectionOpen = useCallback((collection: ProviderCollection) => {
-        navigateToCollection(createSearchResultCollection(collection), 'search');
+    const handleSearchResultCollectionOpen = useCallback((collection: SearchCollectionResult) => {
+        // 本地与 Navidrome 的结果本来就是集合描述；在线平台的 omni 集合要转一下。
+        navigateToCollection(
+            isLibrarySearchCollection(collection) ? collection : createSearchResultCollection(collection),
+            'search',
+        );
     }, [navigateToCollection]);
 
     usePlaybackUiEffects({
         statusMsg,
         loadLocalSongs,
-        loadLocalPlaylists,
+        loadFoliaPlaylists,
         localMusicUpdatedEvent: LOCAL_MUSIC_UPDATED_EVENT,
         blobUrlRef,
         volumePreviewFrameRef,
@@ -1160,6 +1151,14 @@ export default function App() {
     });
 
     automixRef.current = automix;
+    // 分轨调音台：automix 关着、不在 HiFi / 外部播放器上时，在 deck 上按四轨强度改写元素的声音（services/stemMixer）。
+    useStemMixer({
+        audioRef,
+        audioContextRef,
+        getActiveChain: automix.getActiveChain,
+        hifiBlocked: hifiBlocksAutomix,
+        externalBlocked: externalBlocksAutomix,
+    });
     // The route flipping to HiFi silences both decks and suspends the AudioContext before mpv opens the device.
     useWebEngineYield({ audioRef, audioContextRef, automix });
 
@@ -1270,18 +1269,6 @@ export default function App() {
         isStageActive: isNowPlayingStageActive,
     }) : null), [isShowingTail, displaySong, playQueue, effectiveLoopMode, isFmMode, isNowPlayingStageActive]);
 
-    /** True while the card previews the next track (plain track-end countdown, not the blend). */
-    const [countdownActive, setCountdownActive] = useState(false);
-    useMotionValueEvent(currentTime, 'change', (time) => {
-        const shouldPreview = stageTrackPillOnScreen
-            && nextUpTrack !== null
-            && Number.isFinite(displayDuration)
-            && displayDuration > 0
-            && displayDuration - time > 0
-            && displayDuration - time <= NEXT_UP_LEAD_SEC;
-        setCountdownActive(prev => (prev === shouldPreview ? prev : shouldPreview));
-    });
-
     /**
      * The track the card shows while announcing a switch.
      * During a blend the arriving track comes from the queue successor of the displayed
@@ -1301,7 +1288,8 @@ export default function App() {
             album: getSongAlbumLabel(stageNextUpTrack) || null,
         };
     }, [stageTrackPillMode, stageNextUpTrack]);
-    const stageIsNextUp = stageNextUp !== null && (isShowingTail || countdownActive);
+    // A blend's preview. The plain track-end countdown is kept by TrackEndCountdownHost and added in AppOverlays.
+    const stageIsNextUp = stageNextUp !== null && isShowingTail;
 
 
     // The duration normally arrives on `loadedmetadata`, which fires when an element is given a
@@ -1462,6 +1450,8 @@ export default function App() {
     });
 
     useStagePlayerSearchBridge();
+    // Stable for the remote-command listener's deps; the cycle skips loop-all in Personal FM.
+    const cycleLoopModeFromRemote = useCallback(() => handleToggleLoopMode(isFmMode), [handleToggleLoopMode, isFmMode]);
 
     const {
         publishStagePlayerPlaybackUpdate,
@@ -1492,13 +1482,13 @@ export default function App() {
         lyricTimelineOffsetMs: effectiveLyricTimelineOffsetMs,
         onRemoteExportCommand: handleExportCommand,
         onExternalPlayRequest: handleStageExternalPlayRequest,
-        onRemoteCycleLoopMode: handleToggleLoopMode,
+        onRemoteCycleLoopMode: cycleLoopModeFromRemote,
         onRemoteTransitionSeek: seekDuringTransition,
         publishTrackTransition: automixEnabled,
         isTrackTransitionAudible: automix.isTransitionAudible,
         // Keyed on the displayed track, so the like state matches the song the remote is showing
         // while a blend is held rather than the one arriving underneath it.
-        isLiked: resolveSongLiked(displaySong, { isLocalSongLiked, starredNavidromeSongIds }),
+        isLiked: resolveSongLiked(displaySong, { isFoliaSongLiked, starredNavidromeSongIds }),
         onLike: handleLike,
     });
 
@@ -1778,7 +1768,7 @@ export default function App() {
         runAutoMatchBestLyric: handleAutoMatchBestLyricForCurrentSong,
         toggleCurrentSongPureMusicMark: handleToggleCurrentSongPureMusicMark,
         toggleSongLike: handleLike,
-        isSongLiked: resolveSongLiked(displaySong, { isLocalSongLiked, starredNavidromeSongIds }),
+        isSongLiked: resolveSongLiked(displaySong, { isFoliaSongLiked, starredNavidromeSongIds }),
 
         navigateToHome,
         navigateToPlayer,
@@ -1913,8 +1903,6 @@ export default function App() {
     useLyricWordSegmentation();
     // Loads icu-folia, the default word segmenter, once a word-based mode shows Chinese or Japanese.
     useIcuFoliaSegmentation(visualizerMode);
-    // With 自动 AI 分词 on, segments a song that has no saved split by itself (issue #960).
-    useAutoLyricSegmentation({ visualizerMode, isLyricsLoading, save: lyricSegmentationActions.save });
     /**
      * Cancels a blend back onto the track the listener is hearing, or null when there is none.
      *
@@ -2127,7 +2115,7 @@ export default function App() {
         controlsDisabled: isNowPlayingControlDisabled,
         isLyricsLoading,
         persistQueue: persistLastPlaybackCache,
-        refreshQueuePrefetch: (song, previous, next) => refreshPrefetchAfterQueueEdit(song, previous, next, audioQuality, user?.id),
+        refreshQueuePrefetch: (song, previous, next) => refreshPrefetchAfterQueueEdit(song, previous, next, audioQuality),
     });
 
     const visualizerRendererModel = useVisualizerRendererModel({
@@ -2195,7 +2183,7 @@ export default function App() {
         removeQueueSong,
         moveQueueSong,
         clearQueue,
-        saveCurrentQueueAsLocalPlaylist,
+        saveCurrentQueueAsPlaylist,
     });
     // 遥控窗口展开的队列：点歌、下一首播放、移到末尾、移除，走浮岛的同一组队列动作。
     useRemoteQueueCommands(wallToolsHost, playQueue, isNowPlayingControlDisabledRef);
@@ -2208,15 +2196,13 @@ export default function App() {
         togglePlayback: togglePlay,
         enterPlaybackView: navigateFromPlayerCapsule,
         refreshOnlineProviderPlaylists: refreshActiveProviderPlaylists,
-        user,
-        playlists,
-        cloudPlaylist,
         focusedPlaylistIndex,
         setFocusedPlaylistIndex,
         navigateToSearch,
         localSongs,
         localLibraryCatalog,
         localPlaylists,
+        onRefreshLocalPlaylists: loadFoliaPlaylists,
         onRefreshLocalSongs,
         onAddLocalSongToQueue: handleLocalQueueAdd,
         localMusicState,
@@ -2303,13 +2289,13 @@ export default function App() {
         removeQueueSong,
         moveQueueSongToEnd,
         moveQueueSongToNext,
-        saveCurrentQueueAsLocalPlaylist,
+        saveCurrentQueueAsPlaylist,
         accountController,
         handleSyncData: handleActiveProviderSyncData,
         isSyncing: isProviderSyncing,
         handleToggleDaylight: toggleDaylightMode,
         // Derived inside the hook, but these are the sources only App.tsx holds.
-        isLocalSongLiked,
+        isFoliaSongLiked,
         shouldHidePlayerRightPanelButton,
         localSongs,
         localLibraryCatalog,
@@ -2834,6 +2820,7 @@ export default function App() {
                             <Lattice
                                 controls={{ playback: commandPaletteContext.playback, loopMode: effectiveLoopMode,
                                     invokeCommandById: commandPalette.invokeCommandById, canInvokeCommandById: commandPalette.canInvokeCommandById,
+                                    fmDislike: () => { void handleFmTrash(); },
                                     isStageActive: isNowPlayingStageActive, disabled: isNowPlayingControlDisabled }}
                                 lyrics={commandPaletteContext.shared.lyrics}
                                 lyricSource={visualizerRendererModel}
@@ -2849,8 +2836,8 @@ export default function App() {
                                 onBack={navigateBackFromLattice}
                                 onGoHome={navigateToHome}
                                 onOpenPlayer={navigateToPlayer}
-                                onPlaySong={(song, queue) => {
-                                    void playSong(song, queue, false, { shouldNavigateToPlayer: false });
+                                onPlaySong={(song, queue, asFm) => {
+                                    void playSong(song, queue, asFm, { shouldNavigateToPlayer: false });
                                 }}
                                 onTogglePlayback={togglePlay}
                                 onSeek={seekMainAudio}
@@ -2867,6 +2854,9 @@ export default function App() {
                 )}
             </AnimatePresence>
             </WallToolsDockHost>
+
+            {/* Folium `playback.surface`: a source's own picture under the player page, kept for the window's life. */}
+            <SurfacePlaybackHost visible={currentView === 'player'} />
 
             {/* --- VISUALIZER (Background Layer & Main Click Target) --- */}
             {/* 指针隐藏跟着控制栏的空闲时钟走，不另起一套计时：控件收起时页面上已经没有可点的东西，
@@ -2935,13 +2925,11 @@ export default function App() {
                 question about the current song, and a shortcut has to reach it with the panel shut. */}
             <AddToPlaylistHost
                 isDaylight={isDaylight}
-                localPlaylists={localPlaylists}
-                onAddSongsToLocalPlaylist={addPickedSongsToLocalPlaylist}
-                onCreateLocalPlaylistWithSongs={createLocalPlaylistWithSongs}
                 onAddSongsToOnlinePlaylist={addPickedSongsToOnlinePlaylist}
                 onCreateOnlinePlaylistWithSongs={createOnlinePlaylistWithSongs}
                 onAddSongsToNavidromePlaylist={addPickedSongsToNavidromePlaylist}
                 onCreateNavidromePlaylistWithSongs={createNavidromePlaylistWithSongs}
+                isFoliaSongLiked={isFoliaSongLiked}
             />
 
             {/* 速记簿：左缘的把手与滑出的抽屉，非模态，三个视图里都在；播放页隐藏 UI 时把手跟着藏起来。 */}
@@ -2992,7 +2980,9 @@ export default function App() {
             />
             <UserGuideModal theme={theme} />
             <PlaybackEntryViewPrompt theme={theme} />
-            <LatticeFmNotice />
+            {/* With 自动 AI 分词 on, segments a song that has no saved split by itself (issue #960). */}
+            <AutoLyricSegmentationHost visualizerMode={visualizerMode} isLyricsLoading={isLyricsLoading} save={lyricSegmentationActions.save} />
+            <TrackEndCountdownHost enabled={stageTrackPillOnScreen && nextUpTrack !== null} duration={displayDuration} />
         </AppShell>
     );
 }

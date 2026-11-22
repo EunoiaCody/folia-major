@@ -14,6 +14,8 @@ import * as lyrics from './LyricsPage';
 import * as mods from './ModsPage';
 import * as playback from './PlaybackPage';
 import * as player from './PlayerPage';
+import * as remote from './RemotePage';
+import * as sources from './SourcesPage';
 import * as storage from './StoragePage';
 
 // src/components/modal/settings/pages/index.ts
@@ -30,11 +32,13 @@ const PAGE_MODULES: Record<SettingsSectionId, PageModule> = {
     home,
     playback,
     lyrics,
+    sources,
     general,
     interaction,
     integration,
     storage,
     desktop,
+    remote,
     graphics,
     mods,
     developer,

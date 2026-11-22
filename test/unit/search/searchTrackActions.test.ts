@@ -1,27 +1,11 @@
+// @builtin-sources
 import { describe, expect, it, vi } from 'vitest';
 import { dispatchSearchTrackAction } from '@/components/app/search/searchTrackActions';
 import type { LocalSong, UnifiedSong } from '@/types';
-import { registerOnlineMusicProvider } from '@/services/onlineMusic/providerRegistry';
-
 const getStateMock = vi.hoisted(() => vi.fn(() => ({ unlockUnavailableSongs: false })));
 vi.mock('@/stores/useAudioSettingsStore', () => ({
     useAudioSettingsStore: { getState: getStateMock },
 }));
-
-// Netease provider so shouldAutoReplaceUnavailableSong can resolve availability.
-registerOnlineMusicProvider({
-    id: 'netease',
-    displayName: 'netease',
-    capabilities: { search: true, playback: true, lyrics: true, auth: true, userLibrary: true, playlists: true, albums: true, artists: true, recommendations: true, mutations: true, wordByWordLyrics: true },
-    normalizeSong: raw => raw as UnifiedSong,
-    playback: {
-        getSongDetail: async () => null,
-        getAudioSource: async () => null,
-        getAvailability: (song: UnifiedSong) => (song.privilege?.st != null && song.privilege.st < 0
-            ? { state: 'unavailable', label: '无版权' }
-            : { state: 'playable' }),
-    },
-});
 
 // Verifies search playback and queue actions dispatch to the matching source.
 

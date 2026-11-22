@@ -6,11 +6,10 @@ import { calculateMatchScoreDetails } from '../utils/lyrics/matchScore';
 import { buildLyricSearchQuery } from '../utils/lyrics/searchQuery';
 import { getPlaybackSongKey } from '../utils/appPlaybackGuards';
 import { resolveKuwoDirectSource } from './kuwoClient';
-import { isNeteaseTrialAudioUrl } from './onlineMusic/netease/netease';
 
 // src/services/unlockService.ts
 // 显式 cross-provider 编排：当歌曲所属 provider 的标准授权音源不可用时，
-// 先允许同平台 unblock（netease unblock=true，provider adapter 内实现），
+// 先允许同平台 unblock（netease unblock=true，由音源模组的 playback.audio@1 实现），
 // 仍失败再跨 provider（酷狗 → QQ）用歌曲元信息搜索同曲替换音源。
 // 每次结果都带 unlocked 标记与 sourceRef.providerId，原歌曲身份不被污染。
 
@@ -69,7 +68,7 @@ async function findMatchingSource(
 /**
  * 解析歌曲可播放音源，带 VIP 解锁编排：
  * 1. 标准授权音源（provider 原始 grant，未触发任何解锁）
- * 2. 同平台 unblock（netease unblock=true，由 provider adapter 实现，同平台完整音源）
+ * 2. 同平台 unblock（netease unblock=true，由音源模组实现，同平台完整音源）
  * 3. 跨 provider 替换（酷狗 → QQ，基于歌曲元信息的语义匹配）
  */
 export const resolveUnlockedAudioSource = async (
@@ -143,5 +142,7 @@ export const isStaleTrialPrefetchUrl = (audioUrl: string | null | undefined): bo
     if (!audioUrl) return false;
     const settings = useAudioSettingsStore.getState();
     const unlockOn = settings.unlockVipSongs || settings.unlockUnavailableSongs;
-    return unlockOn && isNeteaseTrialAudioUrl(audioUrl);
+    // 平台给试听片段的地址路径里带 jd-musicrep-ts / musicrep（与音源里的同一标记，宿主不 import 音源代码）；
+    // 音源那份在 sources/netease/core/netease.ts 的 isNeteaseTrialAudioUrl，改一边要一起改。
+    return unlockOn && /(^|\/)jd-musicrep-ts(\/|$)|(^|\/)musicrep\//.test(audioUrl);
 };

@@ -1,6 +1,7 @@
 import { registerPersonalFmLanding, takePersonalFmLanding } from './personalFmLanding';
+import { usePersonalFmLookahead } from './usePersonalFmLookahead';
 import { usePersonalFmModeStore } from '@/stores/usePersonalFmModeStore';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Dispatch, MutableRefObject, SetStateAction } from 'react';
 import type { MotionValue } from 'framer-motion';
 import { applyOnlineAudioSourceMetadata, loadOnlineSongLyrics } from '../../../../services/onlinePlayback';
@@ -8,6 +9,7 @@ import { askPlayedSong, isSongUnavailable, shouldAutoReplaceUnavailableSong } fr
 import { getSongResourceCacheKey } from '../../../../services/onlineMusic/resourceKeys';
 import { getPersonalFmSelection, getStationRequestOptions } from '../../../../stores/usePersonalFmModeStore';
 import { omni } from '../../../../services/onlineMusic/omni';
+import { itemTraits } from '../../../../services/onlineMusic/itemTraits';
 import { announceExternalPlayback, beginExternalPlayback, isExternalRoute, yieldExternalPlayback } from '../../../../services/onlineMusic/externalPlayback';
 import { getCachedSongCoverUrl, hasCachedSongAudio } from '../../../../services/onlineMusic/resourceCache';
 import { getPrefetchedData, invalidateAndRefetch, prefetchNearbySongs, refreshPrefetchAfterQueueEdit } from '../../../../services/prefetchService';
@@ -20,6 +22,7 @@ import type { LocalSong, QueueAddBehavior, SongResult, StatusMessage, UnifiedSon
 import type { AudioQualityPreference, MediaId } from '../../../../types/onlineMusic';
 import type { NextTrackOptions, PlaybackNavigationOptions, UnavailableReplacementRequest } from '../../../../types/appPlayback';
 import type { NavidromeSong } from '../../../../types/navidrome';
+import type { FoliaPlaylistSummary } from '../../../../types/foliaPlaylist';
 import {
     getOnlineProviderIdForSong,
     getPlaybackSongKey,
@@ -51,8 +54,15 @@ import { shuffledCopy } from '../../../../utils/shuffledCopy';
 import { shuffleQueueInRounds, useShuffleRoundTracking } from '../shuffle/useShuffleRoundTracking';
 import { buildStagePlayerSnapshot, resolveStagePlayerQueueItemIndex } from '../../../../utils/stagePlayerSnapshot';
 import type { LocalLibraryDisplayCatalog } from '../../../../services/playbackAdapters';
-import type { SearchKind, SearchReturnView, SearchSource } from '../../../../stores/useSearchNavigationStore';
+import {
+    setLocalSearchCollectionsReader,
+    type SearchExecutorDeps,
+    type SearchKind,
+    type SearchReturnView,
+    type SearchSource,
+} from '../../../../stores/useSearchNavigationStore';
 import { dispatchSearchTrackAction } from '../../search/searchTrackActions';
+import { createLocalSearchCollectionsReader } from '../../search/localSearchCollections';
 import { playbackFade } from '../../../../services/playbackFade';
 import { getProviderSongMetadata } from '../../../../services/onlineMusic/songMetadata';
 import { setStatusMessage as setStatusMsg, beginStatusLoading, completeStatusLoading, failStatusLoading, cancelStatusLoading, reviseStatusLoading, withStatusLoadingResult } from '../../../../stores/useStatusMessageStore';
@@ -69,7 +79,6 @@ import { currentTime } from '../../../../stores/motionSignals';
 import { setIsPanelOpen, setPanelTab } from '../../../../stores/useAppViewStore';
 import { useAudioSettingsStore } from '../../../../stores/useAudioSettingsStore';
 import { useSearchNavigationStore } from '../../../../stores/useSearchNavigationStore';
-import { showLatticeFmNotice, usePlaybackEntryViewStore } from '../../../../stores/usePlaybackEntryViewStore';
 import { useStableActionSurface } from '../../../../hooks/useStableCallbacks';
 import { hasBeforePlayHook, notifyPlaybackFailed, runBeforePlayHook } from '../../../../services/hostExtensionHooks';
 import { wholeQueueWritesSoFar } from '../../../../services/wholeQueueWrites';
@@ -86,19 +95,11 @@ type SearchDeps = {
         query: string;
         sourceTab: SearchSource;
         kind?: SearchKind;
-        deps: {
-            localSongs: LocalSong[];
-            localLibraryCatalog?: LocalLibraryDisplayCatalog;
-            t: (key: string, fallback?: string) => string;
-        };
+        deps: SearchExecutorDeps;
         returnView?: SearchReturnView;
     }) => Promise<boolean>;
     loadMoreSearchResults: (args: {
-        deps: {
-            localSongs: LocalSong[];
-            localLibraryCatalog?: LocalLibraryDisplayCatalog;
-            t: (key: string, fallback?: string) => string;
-        };
+        deps: SearchExecutorDeps;
     }) => Promise<void>;
 };
 
@@ -107,7 +108,10 @@ type UsePlaybackQueueControllerParams = {
     isNowPlayingStageActive: boolean;
     shouldNavigateToPlayerOnTrackChange: boolean;
     localSongs: LocalSong[];
-    localLibraryCatalog: LocalLibraryDisplayCatalog;
+    /** Folia 聚合歌单的摘要：搜索「本地」来源的歌单时从这里筛。 */
+    localPlaylists: readonly FoliaPlaylistSummary[];
+    /** 曲库目录；ready 为 false 时（还没读好）本地专辑按歌曲原始标签分组。 */
+    localLibraryCatalog: LocalLibraryDisplayCatalog & { ready?: boolean };
     userId?: MediaId;
     setLyrics: (nextLyrics: any) => void;
     setIsLyricsLoading: SetState<boolean>;
@@ -255,6 +259,7 @@ export function usePlaybackQueueController({
     isNowPlayingStageActive,
     shouldNavigateToPlayerOnTrackChange,
     localSongs,
+    localPlaylists,
     localLibraryCatalog,
     userId,
     setLyrics,
@@ -315,6 +320,8 @@ export function usePlaybackQueueController({
     const playQueue = usePlaybackStore(state => state.playQueue);
     const playerState = usePlaybackStore(state => state.playerState);
     const isFmMode = usePlaybackStore(state => state.isFmMode);
+    // 私人 FM 的当前曲目落到队列最后两首就提前续歌，不只在「下一首」时（直接点了后面的一首也续上）。
+    usePersonalFmLookahead(isNowPlayingStageActive);
     const searchQuery = useSearchNavigationStore(state => state.searchQuery);
     const searchSourceTab = useSearchNavigationStore(state => state.searchSourceTab);
     const searchReturnView = useSearchNavigationStore(state => state.searchReturnView);
@@ -628,9 +635,6 @@ export function usePlaybackQueueController({
         if (playsAsFm && !wasFmMode) {
             setPanelTab('queue');
             setIsPanelOpen(true);
-            if (usePlaybackEntryViewStore.getState().playbackEntryView === 'lattice') {
-                showLatticeFmNotice();
-            }
         }
 
         // The play starts here: from now on a newer play, or a drop of the plays in flight, ends it.
@@ -1127,8 +1131,9 @@ export function usePlaybackQueueController({
                 },
             });
             if (askedSongKeyRef.current !== songKey || startOfAskedSong() !== askedStart) cancelStatusLoading(loadingMessage);
-            // The load has ended; a song still asked for that it left without lyrics may get some from a mod.
-            if (askedSongKeyRef.current === songKey) supplyLyricsAfterEmptyLoad();
+            // The load has ended; a song still asked for that it left without lyrics may get some from a mod
+            // (not an item of a kind with no lyrics, plan §4.4).
+            if (askedSongKeyRef.current === songKey && itemTraits(song).lyrics !== 'none') supplyLyricsAfterEmptyLoad();
         } catch (error) {
             console.warn('[App] Lyric fetch failed', error);
             failStatusLoading(loadingMessage, t('status.bestLyricsMatchFailed'));
@@ -1233,6 +1238,23 @@ export function usePlaybackQueueController({
         void playSong(song, nextQueue, false);
     }, [playQueue, playSong]);
 
+    const searchExecutorDeps = useMemo<SearchExecutorDeps>(() => ({
+        localSongs,
+        localLibraryCatalog,
+        t: (key, fallback) => t(key, fallback ?? ''),
+    }), [localLibraryCatalog, localSongs, t]);
+
+    // 搜本地专辑、歌单从这里读（所有搜索入口共用）：分组在第一次搜到它们时才算，曲库数据变了才换一份。
+    useEffect(() => {
+        setLocalSearchCollectionsReader(createLocalSearchCollectionsReader({
+            localSongs,
+            localPlaylists,
+            catalog: localLibraryCatalog,
+            t,
+        }));
+        return () => setLocalSearchCollectionsReader(null);
+    }, [localLibraryCatalog, localPlaylists, localSongs, t]);
+
     const handleSearchOverlaySubmit = useCallback(async (requestedSource?: SearchSource, requestedKind?: SearchKind) => {
         const trimmedQuery = searchQuery.trim();
         if (!trimmedQuery) {
@@ -1244,11 +1266,7 @@ export function usePlaybackQueueController({
             query: trimmedQuery,
             sourceTab,
             kind: requestedKind,
-            deps: {
-                localSongs,
-                localLibraryCatalog,
-                t: (key, fallback) => t(key, fallback ?? ''),
-            },
+            deps: searchExecutorDeps,
             returnView: searchReturnView,
         });
 
@@ -1261,25 +1279,17 @@ export function usePlaybackQueueController({
             });
         }
     }, [
-        localLibraryCatalog,
-        localSongs,
         navigateToSearch,
         searchDeps,
+        searchExecutorDeps,
         searchQuery,
         searchReturnView,
         searchSourceTab,
-        t,
     ]);
 
     const handleSearchLoadMore = useCallback(async () => {
-        await searchDeps.loadMoreSearchResults({
-            deps: {
-                localSongs,
-                localLibraryCatalog,
-                t: (key, fallback) => t(key, fallback ?? ''),
-            },
-        });
-    }, [localLibraryCatalog, localSongs, searchDeps, t]);
+        await searchDeps.loadMoreSearchResults({ deps: searchExecutorDeps });
+    }, [searchDeps, searchExecutorDeps]);
 
     const handleSearchResultPlay = useCallback((track: UnifiedSong) => {
         if (!isSongUnavailable(track)) {

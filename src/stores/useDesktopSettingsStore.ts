@@ -1,6 +1,6 @@
 // src/stores/useDesktopSettingsStore.ts
 // Desktop-shell behaviour: tray and taskbar, wallpaper mode, display-sleep and voice-input
-// interlocks, launch target, the experimental mod system switch, the Windows render GPU, and the
+// interlocks, launch target, the mod system and community mods switches, the Windows render GPU, and the
 // opt-in background throttling.
 //
 // Split out of useSettingsUiStore.
@@ -9,6 +9,9 @@ import { create } from 'zustand';
 import { getStoredBoolean, getStoredString, setStoredBoolean, setStoredString } from './storagePrimitives';
 import { setStatusMessage } from './useStatusMessageStore';
 import i18n from '../i18n/config';
+import type { RemoteLyricLayout } from '../types/remoteControl';
+import { DEFAULT_REMOTE_LYRIC_LAYOUT, parseRemoteLyricLayout, serializeRemoteLyricLayout } from '../utils/remoteLyricLayout';
+import { DEFAULT_UI_ZOOM_STEP, readUiZoomStep, stepUiZoom, type UiZoomStep } from '../utils/uiZoom';
 
 export const MINIMIZE_TO_TRAY_STORAGE_KEY = 'minimize_to_tray';
 
@@ -33,6 +36,11 @@ export const REMOTE_CONTROL_EXPAND_COVER_STORAGE_KEY = 'remote_control_expand_co
 
 export const REMOTE_CONTROL_TEXT_SHADE_STORAGE_KEY = 'remote_control_text_shade';
 
+// Renderer only: the main window carries it to the remote window in its snapshot (useElectronPlaybackBridge).
+// @note Not in the appearance config's import / export: the config code is also the web OBS link, and only what
+// the OBS page shows goes in (user, 2026-11-08); the OBS page has no remote window, like the switches above.
+export const REMOTE_CONTROL_LYRIC_LAYOUT_STORAGE_KEY = 'remote_control_lyric_layout';
+
 export const WALLPAPER_MODE_STORAGE_KEY = 'wallpaper_mode';
 
 export const WALLPAPER_ENTRY_CONFIRMED_STORAGE_KEY = 'wallpaper_entry_confirmed';
@@ -51,6 +59,12 @@ export const GPU_PREFERENCE_STORAGE_KEY = 'gpu_preference';
 // applies it to the main window. Off by default: some streamers capture the window while it is covered.
 export const BACKGROUND_THROTTLING_STORAGE_KEY = 'background_throttling';
 
+// 界面缩放（#1264）：主窗口整页缩放的开关和挡位（百分比，见 utils/uiZoom.ts）。只在渲染进程，由
+// services/uiZoomRuntime.ts 套到主窗口上；遥控窗口尺寸固定，不跟着缩放。
+// 是这台电脑上窗口的设置（和系统显示缩放配着调），不是外观配置，所以不进配置码的导入导出，和本 store 其余的键一样。
+export const UI_ZOOM_ENABLED_STORAGE_KEY = 'ui_zoom_enabled';
+export const UI_ZOOM_STEP_STORAGE_KEY = 'ui_zoom_step';
+
 /** Which GPU Chromium renders on: its own choice, the high-performance one, or the power-saving one. */
 export type GpuPreference = 'auto' | 'high-performance' | 'low-power';
 
@@ -67,11 +81,17 @@ export type DesktopSettingsState = {
     voiceInputPauseEnabled: boolean;
     preventDisplaySleepDuringPlayback: boolean;
     /**
-     * Master switch for the experimental mod system. Off by default: while it is
-     * off the main process loads no mod at all and the mod commands stay out of
-     * the palette, so an unfinished apiVersion 1 is opt-in rather than ambient.
+     * Master switch for the mod system. On by default since Folium 2.0 (the online sources are source mods):
+     * a profile that never stored it reads on, one switched off stays off. While it is off the main process
+     * loads no mod from the mods folders and the mod commands stay out of the palette.
      */
     modSystemEnabled: boolean;
+    /**
+     * Folium 2.0, community mods (main process communityMods.cjs): off, only official source mods install and
+     * run. Shown only: the main process owns it (MOD_COMMUNITY_ENABLED, never through save-settings) and
+     * confirms turning it on, so it is not mirrored to localStorage either.
+     */
+    modCommunityEnabled: boolean;
     hideTaskbarIcon: boolean;
     hideRemoteControlTaskbarIcon: boolean;
     /** Remote control window: never reveal the top floating window-control bar. */
@@ -82,6 +102,8 @@ export type DesktopSettingsState = {
     remoteControlExpandCover: boolean;
     /** Remote control window, transparent background: the idle type sits on a soft dark shade. Off by default. */
     remoteControlTextShade: boolean;
+    /** Remote control window: one lyric pair or two, and what each of the four rows shows. */
+    remoteControlLyricLayout: RemoteLyricLayout;
     wallpaperMode: boolean;
     /** Persisted: the one-time entry explanation has been accepted, so later entries go straight in. */
     wallpaperEntryConfirmed: boolean;
@@ -99,13 +121,19 @@ export type DesktopSettingsState = {
      * even out of sight (wallpaper, video export, OBS browser source).
      */
     backgroundThrottling: boolean;
+    /** 界面缩放开关；关着时主窗口是 100%。 */
+    uiZoomEnabled: boolean;
+    /** 开关打开时用的挡位（百分比）；关掉开关也留着，下次打开还是它。 */
+    uiZoomStep: UiZoomStep;
     /** Transient (never persisted), from the main process: false on native Wayland, where always-on-top is silently ignored. */
     windowAlwaysOnTopSupported: boolean;
-    setDesktopPreferenceSnapshot: (settings: { MINIMIZE_TO_TRAY?: unknown; CLOSE_TO_TRAY?: unknown; HIDE_TASKBAR_ICON?: unknown; REMOTE_CONTROL_SKIP_TASKBAR?: unknown; REMOTE_CONTROL_HIDE_TITLEBAR?: unknown; REMOTE_CONTROL_CLICK_THROUGH?: unknown; REMOTE_CONTROL_EXPAND_COVER?: unknown; REMOTE_CONTROL_TEXT_SHADE?: unknown; VOICE_INPUT_PAUSE_ENABLED?: unknown; PREVENT_DISPLAY_SLEEP_DURING_PLAYBACK?: unknown; MOD_SYSTEM_ENABLED?: unknown; GPU_PREFERENCE?: unknown; BACKGROUND_THROTTLING?: unknown; wallpaper_mode?: unknown; wallpaper_entry_confirmed?: unknown; wallpaper_mac_autohide_dock?: unknown; window_always_on_top_supported?: unknown; }) => void;
+    setDesktopPreferenceSnapshot: (settings: { MINIMIZE_TO_TRAY?: unknown; CLOSE_TO_TRAY?: unknown; HIDE_TASKBAR_ICON?: unknown; REMOTE_CONTROL_SKIP_TASKBAR?: unknown; REMOTE_CONTROL_HIDE_TITLEBAR?: unknown; REMOTE_CONTROL_CLICK_THROUGH?: unknown; REMOTE_CONTROL_EXPAND_COVER?: unknown; REMOTE_CONTROL_TEXT_SHADE?: unknown; VOICE_INPUT_PAUSE_ENABLED?: unknown; PREVENT_DISPLAY_SLEEP_DURING_PLAYBACK?: unknown; MOD_SYSTEM_ENABLED?: unknown; MOD_COMMUNITY_ENABLED?: unknown; GPU_PREFERENCE?: unknown; BACKGROUND_THROTTLING?: unknown; wallpaper_mode?: unknown; wallpaper_entry_confirmed?: unknown; wallpaper_mac_autohide_dock?: unknown; window_always_on_top_supported?: unknown; }) => void;
     handleToggleMinimizeToTray: (enable: boolean) => void;
     handleToggleCloseToTray: (enable: boolean) => void;
     handleToggleVoiceInputPause: (enable: boolean) => void;
     handleToggleModSystem: (enable: boolean) => void;
+    /** Asks the main process; resolves to the switch as it is afterwards (a declined confirmation leaves it off). */
+    handleToggleCommunityMods: (enable: boolean) => Promise<boolean>;
     handleTogglePreventDisplaySleepDuringPlayback: (enable: boolean) => void;
     handleToggleHideTaskbarIcon: (enable: boolean) => void;
     handleToggleHideRemoteControlTaskbarIcon: (enable: boolean) => void;
@@ -113,6 +141,7 @@ export type DesktopSettingsState = {
     handleToggleRemoteControlClickThrough: (enable: boolean) => void;
     handleToggleRemoteControlExpandCover: (enable: boolean) => void;
     handleToggleRemoteControlTextShade: (enable: boolean) => void;
+    handleSetRemoteControlLyricLayout: (layout: RemoteLyricLayout) => void;
     /**
      * The user-facing wallpaper switch (settings card, command palette, tray request). Leaving
      * applies at once; the first-ever entry opens the confirmation and waits for
@@ -127,6 +156,11 @@ export type DesktopSettingsState = {
     handleToggleOpenPlayerOnLaunch: (enable: boolean) => void;
     handleSetGpuPreference: (preference: GpuPreference) => void;
     handleToggleBackgroundThrottling: (enable: boolean) => void;
+    handleToggleUiZoom: (enable: boolean) => void;
+    /** 选一个挡位，同时打开开关。 */
+    handleSetUiZoomStep: (step: UiZoomStep) => void;
+    /** 放大（1）或缩小（-1）一挡，走到 100% 就关掉开关；已经到头时返回 false。 */
+    handleStepUiZoom: (direction: 1 | -1) => boolean;
 };
 
 export const useDesktopSettingsStore = create<DesktopSettingsState>((set, get) => ({
@@ -134,13 +168,15 @@ export const useDesktopSettingsStore = create<DesktopSettingsState>((set, get) =
     closeToTray: getStoredBoolean(CLOSE_TO_TRAY_STORAGE_KEY, false),
     voiceInputPauseEnabled: getStoredBoolean(VOICE_INPUT_PAUSE_STORAGE_KEY, false),
     preventDisplaySleepDuringPlayback: getStoredBoolean(PREVENT_DISPLAY_SLEEP_DURING_PLAYBACK_STORAGE_KEY, false),
-    modSystemEnabled: getStoredBoolean(MOD_SYSTEM_ENABLED_STORAGE_KEY, false),
+    modSystemEnabled: getStoredBoolean(MOD_SYSTEM_ENABLED_STORAGE_KEY, true),
+    modCommunityEnabled: false,
     hideTaskbarIcon: getStoredBoolean(HIDE_TASKBAR_ICON_STORAGE_KEY, false),
     hideRemoteControlTaskbarIcon: getStoredBoolean(REMOTE_CONTROL_SKIP_TASKBAR_STORAGE_KEY, false),
     hideRemoteControlTitlebar: getStoredBoolean(REMOTE_CONTROL_HIDE_TITLEBAR_STORAGE_KEY, false),
     remoteControlClickThrough: getStoredBoolean(REMOTE_CONTROL_CLICK_THROUGH_STORAGE_KEY, false),
     remoteControlExpandCover: getStoredBoolean(REMOTE_CONTROL_EXPAND_COVER_STORAGE_KEY, true),
     remoteControlTextShade: getStoredBoolean(REMOTE_CONTROL_TEXT_SHADE_STORAGE_KEY, false),
+    remoteControlLyricLayout: parseRemoteLyricLayout(getStoredString(REMOTE_CONTROL_LYRIC_LAYOUT_STORAGE_KEY, '')) ?? DEFAULT_REMOTE_LYRIC_LAYOUT,
     wallpaperMode: getStoredBoolean(WALLPAPER_MODE_STORAGE_KEY, false),
     wallpaperEntryConfirmed: getStoredBoolean(WALLPAPER_ENTRY_CONFIRMED_STORAGE_KEY, false),
     wallpaperEntryConfirmOpen: false,
@@ -148,6 +184,8 @@ export const useDesktopSettingsStore = create<DesktopSettingsState>((set, get) =
     openPlayerOnLaunch: getStoredBoolean(OPEN_PLAYER_ON_LAUNCH_STORAGE_KEY, false),
     gpuPreference: readGpuPreference(getStoredString(GPU_PREFERENCE_STORAGE_KEY, 'auto')) ?? 'auto',
     backgroundThrottling: getStoredBoolean(BACKGROUND_THROTTLING_STORAGE_KEY, false),
+    uiZoomEnabled: getStoredBoolean(UI_ZOOM_ENABLED_STORAGE_KEY, false),
+    uiZoomStep: readUiZoomStep(getStoredString(UI_ZOOM_STEP_STORAGE_KEY, '')) ?? DEFAULT_UI_ZOOM_STEP,
     windowAlwaysOnTopSupported: true,
     setDesktopPreferenceSnapshot: (settings) => {
         const patch: Partial<DesktopSettingsState> = {};
@@ -170,6 +208,9 @@ export const useDesktopSettingsStore = create<DesktopSettingsState>((set, get) =
         if (typeof settings.MOD_SYSTEM_ENABLED === 'boolean') {
             patch.modSystemEnabled = settings.MOD_SYSTEM_ENABLED;
             setStoredBoolean(MOD_SYSTEM_ENABLED_STORAGE_KEY, settings.MOD_SYSTEM_ENABLED);
+        }
+        if (typeof settings.MOD_COMMUNITY_ENABLED === 'boolean') {
+            patch.modCommunityEnabled = settings.MOD_COMMUNITY_ENABLED;
         }
         if (typeof settings.HIDE_TASKBAR_ICON === 'boolean') {
             patch.hideTaskbarIcon = settings.HIDE_TASKBAR_ICON;
@@ -264,6 +305,16 @@ export const useDesktopSettingsStore = create<DesktopSettingsState>((set, get) =
             void window.electron.saveSettings('MOD_SYSTEM_ENABLED', enable);
         }
     },
+    // Straight to the preload bridge, like MOD_SYSTEM_ENABLED's saveSettings: a desktop setting, not mod code.
+    handleToggleCommunityMods: async (enable) => {
+        const result = await window.electron?.mods?.setCommunityMods?.(enable) ?? { ok: false, error: 'no-electron-bridge' };
+        const now = typeof result.enabled === 'boolean' ? result.enabled : get().modCommunityEnabled;
+        set({ modCommunityEnabled: now });
+        if (!result.ok && result.error !== 'community-declined') {
+            setStatusMessage({ type: 'error', text: i18n.t('mods.errors.community-unavailable') });
+        }
+        return now;
+    },
     handleTogglePreventDisplaySleepDuringPlayback: (enable) => {
         setStoredBoolean(PREVENT_DISPLAY_SLEEP_DURING_PLAYBACK_STORAGE_KEY, enable);
         set({ preventDisplaySleepDuringPlayback: enable });
@@ -320,6 +371,10 @@ export const useDesktopSettingsStore = create<DesktopSettingsState>((set, get) =
         if (window.electron?.saveSettings) {
             void window.electron.saveSettings('REMOTE_CONTROL_TEXT_SHADE', enable);
         }
+    },
+    handleSetRemoteControlLyricLayout: (layout) => {
+        setStoredString(REMOTE_CONTROL_LYRIC_LAYOUT_STORAGE_KEY, serializeRemoteLyricLayout(layout));
+        set({ remoteControlLyricLayout: layout });
     },
     handleToggleWallpaperMode: (enable) => {
         // Entering sinks the window under the desktop and takes the keyboard away, so the first
@@ -410,7 +465,37 @@ export const useDesktopSettingsStore = create<DesktopSettingsState>((set, get) =
             text: i18n.t('notifications.' + (enable ? 'backgroundThrottlingOn' : 'backgroundThrottlingOff')),
         });
     },
+    handleToggleUiZoom: (enable) => {
+        applyUiZoom(set, enable, get().uiZoomStep);
+    },
+    handleSetUiZoomStep: (step) => {
+        applyUiZoom(set, true, step);
+    },
+    handleStepUiZoom: (direction) => {
+        const { uiZoomEnabled, uiZoomStep } = get();
+        const next = stepUiZoom(uiZoomEnabled, uiZoomStep, direction);
+        if (!next) return false;
+        applyUiZoom(set, next.enabled, next.step);
+        return true;
+    },
 }));
+
+// 存下开关和挡位，提示现在是多少。页面真正缩放由 services/uiZoomRuntime.ts 订阅这两个值去做。
+function applyUiZoom(
+    set: (patch: Partial<DesktopSettingsState>) => void,
+    enabled: boolean,
+    step: UiZoomStep,
+) {
+    setStoredBoolean(UI_ZOOM_ENABLED_STORAGE_KEY, enabled);
+    setStoredString(UI_ZOOM_STEP_STORAGE_KEY, String(step));
+    set({ uiZoomEnabled: enabled, uiZoomStep: step });
+    setStatusMessage({
+        type: 'info',
+        text: enabled
+            ? i18n.t('notifications.uiZoomChanged', { percent: step })
+            : i18n.t('notifications.uiZoomOff'),
+    });
+}
 
 /**
  * The DesktopSettings half of the former settings snapshot, for the surfaces that
@@ -422,6 +507,7 @@ export const selectDesktopSettingsSnapshot = (state: DesktopSettingsState) => ({
     voiceInputPauseEnabled: state.voiceInputPauseEnabled,
     preventDisplaySleepDuringPlayback: state.preventDisplaySleepDuringPlayback,
     modSystemEnabled: state.modSystemEnabled,
+    modCommunityEnabled: state.modCommunityEnabled,
     hideTaskbarIcon: state.hideTaskbarIcon,
     hideRemoteControlTaskbarIcon: state.hideRemoteControlTaskbarIcon,
     hideRemoteControlTitlebar: state.hideRemoteControlTitlebar,

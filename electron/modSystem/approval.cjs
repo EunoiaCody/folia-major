@@ -8,6 +8,9 @@
 'use strict';
 
 const path = require('path');
+// original-fs: a mod folder is read as files, as the digest reads it (rawFs.cjs).
+const { rawFs: fs } = require('./rawFs.cjs');
+const { resolveModNativeFile } = require('./nativeFiles.cjs');
 const { dialog } = require('electron');
 
 const { shortDigest } = require('./modDigest.cjs');
@@ -32,6 +35,7 @@ const TRUST_DIALOG_LOCALE = {
         visualizerBeatEffects: '会改写智能动感模式的动感效果（visualizer.beatEffects）：模组可以开关各歌词样式的动感效果、调整强度。智能动感模式本身（关闭 / 只用已分析 / 开启）始终由你决定；但在「开启」下，模组打开的效果会让 GPU 为没分析过的歌做相应的分析（按鼓点的效果要分离鼓声）。',
         visualizerBackground: '会切换你的背景（visualizer.background）：模组可以替你换播放页的背景，和你在背景选择器里切换一样。各背景自己的图片和选项不受影响，在播放页随时可以换回。',
         visualizerAnimationIntensity: '会改写动画强度（visualizer.animationIntensity）：模组可以替你调整歌词和背景动画的强度，和你在播放页面板里调整一样。随时可以改回。',
+        themeWrite: '会把模组自己的主题盖在歌曲主题上（theme.write）：模组可以换掉播放页的配色，不会改动你存下的主题。你一选主题就会撤下，在播放页面板里也可以随时撤下。',
         location: '安装位置：',
         fingerprint: '内容指纹：',
         client: '界面代码：',
@@ -47,7 +51,26 @@ const TRUST_DIALOG_LOCALE = {
         signatureInvalid: (reason) => `签名：不匹配（${reason}）。模组内容在签名后被修改，或签名无效，这份签名不能作为审查依据。`,
         rebind: '本次确认仅对当前文件内容生效；模组文件发生变化后需要重新确认。',
         devSource: '开发模式：这个模组位于源码目录的 mods/ 中，确认后修改它的文件不会撤销本次确认。安装版和用户模组目录中的模组没有这项豁免。',
+        sourceIntro: (sources) => `这个模组提供音源：${sources}。它会保管你在这些平台的登录，不受模组的网络和存储限额约束，并随应用一起启动。`,
+        takeover: (ids) => `它会接管这个安装没有带的音源：${ids}，并用上你在这些平台已有的登录（队列、历史、歌单里这些平台的歌也接着用）。`,
+        takeoverData: (items) => `它要接的旧数据：${items}`,
+        takeoverNative: (names) => `它带着自己的原生程序，会直接在你的电脑上运行（不是应用带的那份）：${names}`,
+        certificateExceptions: (hosts) => `对这些域名放宽证书检查：${hosts}`,
+        lyricRelayHosts: (hosts) => `经应用中转歌词请求的域名：${hosts}`,
+        selfSignedUserServers: (sources) => `连接你自己填写的服务器（例如家里的 NAS）时接受它的自签证书：${sources}`,
+        overrideTitle: '用新版本替换内置模组',
+        overrideMessage: (name, id, version, builtinVersion) => `用 ${version} 版替换内置的“${name}”（${id}，${builtinVersion} 版）吗？`,
+        overrideDetail: '这个副本带有有效的 Folium 官方签名，版本高于随应用安装的内置副本。确认后它替代内置副本运行，沿用内置副本的登录和数据；删掉它就回到内置副本。启用后它仍以应用的完整权限运行。',
+        overrideConfirm: '替换',
+        clearTitle: '清除音源数据',
+        clearMessage: (id) => `清除音源“${id}”的数据吗？`,
+        clearDetail: '它会登出，并删掉下面这些。删掉的找不回来；停用音源不会删这些。',
+        clearConfirm: '清除',
         enable: '仍要启用',
+        communityTitle: '打开社区模组',
+        communityMessage: '允许安装和运行社区模组吗？',
+        communityDetail: '社区模组是第三方代码，没有经过 Folia 的官方签名，可能也没有经过安全审查。打开后，你可以从 zip 安装任何模组，模组目录里已有的模组也能启用；启用的模组以应用的完整权限运行：能读写本地文件、访问网络、读取或修改应用设置，并能在界面里执行代码。之前确认过的模组会立刻运行，其余每个模组启用前仍会单独确认。只安装你信任的来源。',
+        communityConfirm: '打开',
         cancel: '取消',
     },
     'zh-TW': {
@@ -66,6 +89,7 @@ const TRUST_DIALOG_LOCALE = {
         visualizerBeatEffects: '會改寫智慧動感模式的動感效果（visualizer.beatEffects）：模組可以開關各歌詞樣式的動感效果、調整強度。智慧動感模式本身（關閉 / 只用已分析 / 開啟）始終由你決定；但在「開啟」下，模組開啟的效果會讓 GPU 為沒分析過的歌做相應的分析（按鼓點的效果要分離鼓聲）。',
         visualizerBackground: '會切換你的背景（visualizer.background）：模組可以替你換播放頁的背景，和你在背景選擇器裡切換一樣。各背景自己的圖片和選項不受影響，在播放頁隨時可以換回。',
         visualizerAnimationIntensity: '會改寫動畫強度（visualizer.animationIntensity）：模組可以替你調整歌詞和背景動畫的強度，和你在播放頁面板裡調整一樣。隨時可以改回。',
+        themeWrite: '會把模組自己的主題蓋在歌曲主題上（theme.write）：模組可以換掉播放頁的配色，不會改動你存下的主題。你一選主題就會撤下，在播放頁面板裡也可以隨時撤下。',
         location: '安裝位置：',
         fingerprint: '內容指紋：',
         client: '介面程式碼：',
@@ -81,7 +105,26 @@ const TRUST_DIALOG_LOCALE = {
         signatureInvalid: (reason) => `簽名：不匹配（${reason}）。模組內容在簽名後被修改，或簽名無效，這份簽名不能作為審查依據。`,
         rebind: '本次確認僅對當前檔案內容生效；模組檔案發生變化後需要重新確認。',
         devSource: '開發模式：這個模組位於原始碼目錄的 mods/ 中，確認後修改它的檔案不會撤銷本次確認。安裝版和使用者模組目錄中的模組沒有這項豁免。',
+        sourceIntro: (sources) => `這個模組提供音源：${sources}。它會保管你在這些平臺的登入，不受模組的網路和儲存限額約束，並隨應用一起啟動。`,
+        takeover: (ids) => `它會接管這個安裝沒有帶的音源：${ids}，並用上你在這些平臺已有的登入（佇列、歷史、歌單裡這些平臺的歌也接著用）。`,
+        takeoverData: (items) => `它要接的舊資料：${items}`,
+        takeoverNative: (names) => `它帶著自己的原生程式，會直接在你的電腦上執行（不是應用帶的那份）：${names}`,
+        certificateExceptions: (hosts) => `對這些網域放寬證書檢查：${hosts}`,
+        lyricRelayHosts: (hosts) => `經應用中轉歌詞請求的網域：${hosts}`,
+        selfSignedUserServers: (sources) => `連線你自己填寫的伺服器（例如家裡的 NAS）時接受它的自簽證書：${sources}`,
+        overrideTitle: '用新版本替換內建模組',
+        overrideMessage: (name, id, version, builtinVersion) => `用 ${version} 版替換內建的“${name}”（${id}，${builtinVersion} 版）嗎？`,
+        overrideDetail: '這個副本帶有有效的 Folium 官方簽名，版本高於隨應用安裝的內建副本。確認後它替代內建副本執行，沿用內建副本的登入和資料；刪掉它就回到內建副本。啟用後它仍以應用的完整權限執行。',
+        overrideConfirm: '替換',
+        clearTitle: '清除音源資料',
+        clearMessage: (id) => `清除音源“${id}”的資料嗎？`,
+        clearDetail: '它會登出，並刪掉下面這些。刪掉的找不回來；停用音源不會刪這些。',
+        clearConfirm: '清除',
         enable: '仍要啟用',
+        communityTitle: '開啟社群模組',
+        communityMessage: '允許安裝和執行社群模組嗎？',
+        communityDetail: '社群模組是第三方程式碼，沒有經過 Folia 的官方簽名，可能也沒有經過安全審查。開啟後，你可以從 zip 安裝任何模組，模組目錄裡已有的模組也能啟用；啟用的模組以應用的完整權限執行：能讀寫本地檔案、存取網路、讀取或修改應用設定，並能在介面裡執行程式碼。之前確認過的模組會立刻執行，其餘每個模組啟用前仍會單獨確認。只安裝你信任的來源。',
+        communityConfirm: '開啟',
         cancel: '取消',
     },
     en: {
@@ -100,6 +143,7 @@ const TRUST_DIALOG_LOCALE = {
         visualizerBeatEffects: 'Changes the beat effects of smart beat mode (visualizer.beatEffects): the mod can switch the beat effects of each lyric style on or off and change their strength. Smart beat mode itself (Off / Analysed only / On) is always yours to choose; under On, though, the effects the mod switches on make the GPU analyse songs not yet analysed for them (effects on drum hits separate the drums).',
         visualizerBackground: 'Switches your background type (visualizer.background): the mod can change the background of the player for you, as you do in the background picker. Each background\'s own pictures and options are left as they are, and you can switch back in the player panel at any time.',
         visualizerAnimationIntensity: 'Changes the animation intensity (visualizer.animationIntensity): the mod can change how lively the lyrics and the background move, as you do in the player panel. You can change it back at any time.',
+        themeWrite: 'Lays the mod\'s own theme over the song\'s theme (theme.write): the mod can change the colors of the player; the themes you saved are left as they are. Any theme you choose ends it, and you can take it off in the player panel at any time.',
         location: 'Installed at: ',
         fingerprint: 'Content fingerprint: ',
         client: 'UI code: ',
@@ -115,7 +159,26 @@ const TRUST_DIALOG_LOCALE = {
         signatureInvalid: (reason) => `Signature: does not match (${reason}). The mod was changed after signing, or the signature is invalid; the signature can no longer vouch for it.`,
         rebind: 'This confirmation applies to the current files only; the mod must be confirmed again after its code changes.',
         devSource: 'Development mode: this mod is in the source tree\'s mods/ directory, so editing its files after this confirmation does not revoke it. Installed builds and the user mods directory have no such exemption.',
+        sourceIntro: (sources) => `This mod provides music sources: ${sources}. It keeps your sign-in on these platforms, is not held to the network and storage limits of mods, and starts together with the app.`,
+        takeover: (ids) => `It takes over sources this installation does not carry: ${ids}, and uses the sign-in you already have on these platforms (their songs in your queue, history and playlists keep working too).`,
+        takeoverData: (items) => `Old data it takes over: ${items}`,
+        takeoverNative: (names) => `It brings native programs of its own, which run directly on your computer (not the ones the app ships): ${names}`,
+        certificateExceptions: (hosts) => `Relaxes certificate checks for these hosts: ${hosts}`,
+        lyricRelayHosts: (hosts) => `Hosts whose lyric requests the app relays: ${hosts}`,
+        selfSignedUserServers: (sources) => `Accepts a self-signed certificate from a server you enter yourself (such as a NAS at home): ${sources}`,
+        overrideTitle: 'Replace a built-in mod with a newer version',
+        overrideMessage: (name, id, version, builtinVersion) => `Replace the built-in "${name}" (${id}, version ${builtinVersion}) with version ${version}?`,
+        overrideDetail: 'This copy carries a valid official Folium signature and is newer than the built-in copy installed with the app. Once confirmed it runs instead of the built-in copy and keeps its sign-in and data; removing it brings the built-in copy back. It still runs with the full privileges of the app.',
+        overrideConfirm: 'Replace',
+        clearTitle: 'Clear source data',
+        clearMessage: (id) => `Clear the data of the source "${id}"?`,
+        clearDetail: 'It is signed out and everything below is removed. What is removed cannot be brought back; turning a source off removes none of it.',
+        clearConfirm: 'Clear',
         enable: 'Enable anyway',
+        communityTitle: 'Turn on community mods',
+        communityMessage: 'Allow installing and running community mods?',
+        communityDetail: 'Community mods are third-party code without an official Folia signature, and may not have had a security review. Once this is on, any mod can be installed from a zip and the mods already in the mods folder can be enabled; an enabled mod runs with the app\'s full rights: it can read and write local files, reach the network, read or change the app\'s settings and run code in the interface. Mods you confirmed before run at once; any other mod is still confirmed on its own before it is enabled. Only install mods from sources you trust.',
+        communityConfirm: 'Turn on',
         cancel: 'Cancel',
     },
     in: {
@@ -134,6 +197,7 @@ const TRUST_DIALOG_LOCALE = {
         visualizerBeatEffects: 'Mengubah efek ketukan mode ketukan pintar (visualizer.beatEffects): mod dapat menyalakan atau mematikan efek ketukan setiap gaya lirik dan mengubah kekuatannya. Mode ketukan pintar itu sendiri (Nonaktif / Hanya yang sudah dianalisis / Aktif) selalu Anda yang memilih; namun saat Aktif, efek yang dinyalakan mod membuat GPU menganalisis lagu yang belum dianalisis untuk efek itu (efek pada pukulan drum memisahkan drum).',
         visualizerBackground: 'Mengganti jenis latar belakang Anda (visualizer.background): mod dapat mengganti latar belakang pemutar untuk Anda, seperti yang Anda lakukan di pemilih latar belakang. Gambar dan opsi setiap latar belakang tidak diubah, dan Anda dapat menggantinya kembali di panel pemutar kapan saja.',
         visualizerAnimationIntensity: 'Mengubah intensitas animasi (visualizer.animationIntensity): mod dapat mengubah seberapa hidup gerakan lirik dan latar belakang, seperti yang Anda lakukan di panel pemutar. Anda dapat mengubahnya kembali kapan saja.',
+        themeWrite: 'Memasang tema milik mod di atas tema lagu (theme.write): mod dapat mengganti warna pemutar; tema yang Anda simpan tidak diubah. Tema apa pun yang Anda pilih mengakhirinya, dan Anda dapat melepasnya di panel pemutar kapan saja.',
         location: 'Terpasang di: ',
         fingerprint: 'Sidik konten: ',
         client: 'Kode antarmuka: ',
@@ -149,7 +213,26 @@ const TRUST_DIALOG_LOCALE = {
         signatureInvalid: (reason) => `Tanda tangan: tidak cocok (${reason}). Mod diubah setelah ditandatangani, atau tanda tangannya tidak valid; tanda tangan ini tidak lagi bisa menjaminnya.`,
         rebind: 'Konfirmasi ini hanya berlaku untuk berkas saat ini; mod harus dikonfirmasi ulang setelah kodenya berubah.',
         devSource: 'Mode pengembangan: mod ini ada di direktori mods/ pada kode sumber, jadi mengubah berkasnya setelah konfirmasi ini tidak membatalkannya. Build terpasang dan direktori mod pengguna tidak mendapat pengecualian ini.',
+        sourceIntro: (sources) => `Mod ini menyediakan sumber musik: ${sources}. Mod ini menyimpan login Anda di platform tersebut, tidak terikat batas jaringan dan penyimpanan mod, dan dimulai bersama aplikasi.`,
+        takeover: (ids) => `Mod ini mengambil alih sumber yang tidak dibawa instalasi ini: ${ids}, dan memakai login Anda yang sudah ada di platform tersebut (lagu-lagunya di antrean, riwayat, dan playlist tetap berfungsi).`,
+        takeoverData: (items) => `Data lama yang diambil alih: ${items}`,
+        takeoverNative: (names) => `Membawa program native sendiri yang langsung berjalan di komputer Anda (bukan yang disertakan aplikasi): ${names}`,
+        certificateExceptions: (hosts) => `Melonggarkan pemeriksaan sertifikat untuk host ini: ${hosts}`,
+        lyricRelayHosts: (hosts) => `Host yang permintaan liriknya diteruskan aplikasi: ${hosts}`,
+        selfSignedUserServers: (sources) => `Menerima sertifikat yang ditandatangani sendiri dari server yang Anda isi sendiri (misalnya NAS di rumah): ${sources}`,
+        overrideTitle: 'Ganti mod bawaan dengan versi yang lebih baru',
+        overrideMessage: (name, id, version, builtinVersion) => `Ganti "${name}" bawaan (${id}, versi ${builtinVersion}) dengan versi ${version}?`,
+        overrideDetail: 'Salinan ini memiliki tanda tangan resmi Folium yang valid dan lebih baru daripada salinan bawaan yang terpasang bersama aplikasi. Setelah dikonfirmasi, salinan ini berjalan menggantikan salinan bawaan dan memakai login serta datanya; menghapusnya mengembalikan salinan bawaan. Salinan ini tetap berjalan dengan hak penuh aplikasi.',
+        overrideConfirm: 'Ganti',
+        clearTitle: 'Hapus data sumber',
+        clearMessage: (id) => `Hapus data sumber "${id}"?`,
+        clearDetail: 'Sumber ini akan keluar dari akun dan semua di bawah ini dihapus. Yang dihapus tidak bisa dikembalikan; menonaktifkan sumber tidak menghapus apa pun dari ini.',
+        clearConfirm: 'Hapus',
         enable: 'Tetap aktifkan',
+        communityTitle: 'Aktifkan mod komunitas',
+        communityMessage: 'Izinkan memasang dan menjalankan mod komunitas?',
+        communityDetail: 'Mod komunitas adalah kode pihak ketiga tanpa tanda tangan resmi Folia, dan mungkin belum melewati tinjauan keamanan. Setelah diaktifkan, mod apa pun bisa dipasang dari zip dan mod yang sudah ada di folder mod bisa diaktifkan; mod yang aktif berjalan dengan hak penuh aplikasi: bisa membaca dan menulis file lokal, mengakses jaringan, membaca atau mengubah pengaturan aplikasi, dan menjalankan kode di antarmuka. Mod yang sudah pernah Anda konfirmasi langsung berjalan; mod lain tetap dikonfirmasi sendiri sebelum diaktifkan. Pasang hanya dari sumber yang Anda percayai.',
+        communityConfirm: 'Aktifkan',
         cancel: 'Batal',
     },
     vi: {
@@ -168,6 +251,7 @@ const TRUST_DIALOG_LOCALE = {
         visualizerBeatEffects: 'Thay đổi hiệu ứng nhịp của chế độ nhịp thông minh (visualizer.beatEffects): mod có thể bật tắt hiệu ứng nhịp của từng kiểu lời bài hát và chỉnh cường độ. Bản thân chế độ nhịp thông minh (Tắt / Chỉ bài đã phân tích / Bật) luôn do bạn quyết định; nhưng ở chế độ Bật, các hiệu ứng mà mod bật sẽ khiến GPU phân tích những bài chưa được phân tích cho chúng (hiệu ứng theo tiếng trống sẽ tách tiếng trống).',
         visualizerBackground: 'Chuyển kiểu nền của bạn (visualizer.background): mod có thể đổi nền của trình phát thay bạn, như khi bạn đổi trong bộ chọn nền. Hình ảnh và tùy chọn riêng của từng nền không bị ảnh hưởng và bạn có thể đổi lại trong bảng phát nhạc bất kỳ lúc nào.',
         visualizerAnimationIntensity: 'Thay đổi cường độ hiệu ứng (visualizer.animationIntensity): mod có thể chỉnh mức độ sôi động của chuyển động lời bài hát và nền, như khi bạn chỉnh trong bảng phát nhạc. Bạn có thể đổi lại bất kỳ lúc nào.',
+        themeWrite: 'Đặt chủ đề riêng của mod lên trên chủ đề của bài hát (theme.write): mod có thể đổi màu sắc của trình phát; các chủ đề bạn đã lưu không bị thay đổi. Bất kỳ chủ đề nào bạn chọn sẽ kết thúc nó và bạn có thể gỡ nó trong bảng phát nhạc bất kỳ lúc nào.',
         location: 'Vị trí cài đặt: ',
         fingerprint: 'Mã định danh nội dung: ',
         client: 'Mã giao diện: ',
@@ -183,7 +267,26 @@ const TRUST_DIALOG_LOCALE = {
         signatureInvalid: (reason) => `Chữ ký: Không khớp (${reason}). Nội dung mod đã bị sửa đổi sau khi ký hoặc chữ ký không hợp lệ; chữ ký này không còn giá trị chứng nhận.`,
         rebind: 'Xác nhận này chỉ có hiệu lực với nội dung tệp hiện tại; bạn sẽ cần xác nhận lại nếu mã mod bị thay đổi.',
         devSource: 'Chế độ phát triển: Mod này nằm trong thư mục mods/ của mã nguồn, do đó chỉnh sửa tệp sau khi xác nhận sẽ không hủy bỏ xác nhận này. Bản cài đặt và thư mục mod người dùng không được miễn trừ.',
+        sourceIntro: (sources) => `Mod này cung cấp nguồn nhạc: ${sources}. Mod sẽ giữ thông tin đăng nhập của bạn trên các nền tảng này, không bị giới hạn mạng và lưu trữ dành cho mod, và khởi động cùng ứng dụng.`,
+        takeover: (ids) => `Mod sẽ tiếp quản các nguồn mà bản cài đặt này không kèm theo: ${ids}, và dùng thông tin đăng nhập sẵn có của bạn trên các nền tảng này (bài hát của chúng trong hàng đợi, lịch sử và danh sách phát vẫn dùng được).`,
+        takeoverData: (items) => `Dữ liệu cũ được tiếp quản: ${items}`,
+        takeoverNative: (names) => `Mang theo chương trình gốc của riêng nó, chạy trực tiếp trên máy tính của bạn (không phải bản đi kèm ứng dụng): ${names}`,
+        certificateExceptions: (hosts) => `Nới lỏng kiểm tra chứng chỉ cho các tên miền này: ${hosts}`,
+        lyricRelayHosts: (hosts) => `Các tên miền mà ứng dụng chuyển tiếp yêu cầu lời bài hát: ${hosts}`,
+        selfSignedUserServers: (sources) => `Chấp nhận chứng chỉ tự ký của máy chủ do bạn tự nhập (ví dụ NAS ở nhà): ${sources}`,
+        overrideTitle: 'Thay mod tích hợp bằng phiên bản mới hơn',
+        overrideMessage: (name, id, version, builtinVersion) => `Thay “${name}” tích hợp (${id}, phiên bản ${builtinVersion}) bằng phiên bản ${version}?`,
+        overrideDetail: 'Bản này có chữ ký chính thức hợp lệ của Folium và mới hơn bản tích hợp được cài cùng ứng dụng. Sau khi xác nhận, bản này chạy thay cho bản tích hợp và giữ nguyên đăng nhập cùng dữ liệu của nó; xóa bản này sẽ quay về bản tích hợp. Bản này vẫn chạy với toàn bộ quyền hạn của ứng dụng.',
+        overrideConfirm: 'Thay',
+        clearTitle: 'Xóa dữ liệu nguồn',
+        clearMessage: (id) => `Xóa dữ liệu của nguồn “${id}”?`,
+        clearDetail: 'Nguồn sẽ đăng xuất và mọi thứ bên dưới sẽ bị xóa. Những gì đã xóa không thể khôi phục; tắt nguồn không xóa những thứ này.',
+        clearConfirm: 'Xóa',
         enable: 'Vẫn bật',
+        communityTitle: 'Bật mod cộng đồng',
+        communityMessage: 'Cho phép cài đặt và chạy mod cộng đồng?',
+        communityDetail: 'Mod cộng đồng là mã của bên thứ ba, không có chữ ký chính thức của Folia và có thể chưa qua đánh giá bảo mật. Khi bật, có thể cài bất kỳ mod nào từ zip và bật các mod đã có trong thư mục mod; mod đã bật chạy với toàn quyền của ứng dụng: đọc ghi tệp cục bộ, truy cập mạng, đọc hoặc sửa cài đặt ứng dụng và chạy mã trong giao diện. Các mod bạn đã xác nhận trước đó sẽ chạy ngay; mọi mod khác vẫn được xác nhận riêng trước khi bật. Chỉ cài từ nguồn bạn tin cậy.',
+        communityConfirm: 'Bật',
         cancel: 'Hủy',
     },
 };
@@ -195,6 +298,12 @@ const TRUST_DIALOG_LOCALE = {
  * `getLocaleKey` the language to ask in.
  */
 const createModApproval = ({ app, store, enabledKey, getMainWindowSafe, getLocaleKey }) => {
+    // Folium 2.0 (plan §5.1): a built-in mod's switch and the one confirmation of an override copy, apart
+    // from the digest-bound approvals of every other mod (`enabledKey`), so a same-id copy in a user folder
+    // never shares a record with the built-in one.
+    const builtinKey = (modId) => `${String(enabledKey(modId)).replace(/\.enabled\./, '.builtin.')}`;
+    const overrideKey = (modId) => `${String(enabledKey(modId)).replace(/\.enabled\./, '.override.')}`;
+
     const resolveDialogLocale = () => {
         try {
             const key = typeof getLocaleKey === 'function' ? getLocaleKey() : null;
@@ -233,6 +342,45 @@ const createModApproval = ({ app, store, enabledKey, getMainWindowSafe, getLocal
             });
         } catch {
             // Persistence is best-effort; in-memory state still applies.
+        }
+    };
+
+    /*
+     * A built-in mod is on unless switched off: no record reads as enabled, and nothing about it is bound
+     * to a digest (plan §5.1, `approval.cjs:248-279` in §5.4).
+     */
+    const readBuiltinEnabled = (modId) => {
+        try {
+            const stored = store.get(builtinKey(modId));
+            return !(stored && typeof stored === 'object' && stored.enabled === false);
+        } catch {
+            return true;
+        }
+    };
+
+    const writeBuiltinEnabled = (modId, enabled) => {
+        try {
+            store.set(builtinKey(modId), { enabled: Boolean(enabled), changedAt: new Date().toISOString() });
+        } catch {
+            // Persistence is best-effort; in-memory state still applies.
+        }
+    };
+
+    /* Whether the user confirmed this copy (by its digest) as the override of a built-in mod. */
+    const isOverrideConfirmed = (modId, digest) => {
+        try {
+            const stored = store.get(overrideKey(modId));
+            return Boolean(digest && stored && typeof stored === 'object' && stored.digest === digest);
+        } catch {
+            return false;
+        }
+    };
+
+    const writeOverrideApproval = (modId, digest) => {
+        try {
+            store.set(overrideKey(modId), { digest, confirmedAt: new Date().toISOString() });
+        } catch {
+            // Best-effort, as above.
         }
     };
 
@@ -284,6 +432,126 @@ const createModApproval = ({ app, store, enabledKey, getMainWindowSafe, getLocal
      * drawn there could be spoofed or dismissed by mod code. This one cannot,
      * and it is the only path that writes an "enabled" trust record.
      */
+    /*
+     * The extra lines of a source mod (plan §5.2 and §5.1): what it provides, what it keeps; for a takeover,
+     * each source id it takes over and the old data it will use. `sources` are the resolved ones
+     * (sourceOwnership.cjs).
+     */
+    const sourceLines = (locale, manifest, sources, dirPath = null) => {
+        if (!Array.isArray(manifest.sources) || manifest.sources.length === 0) return [];
+        const nameOf = (entry) => (typeof entry.name === 'string' ? entry.name : entry.name?.en ?? Object.values(entry.name ?? {})[0] ?? entry.id);
+        const described = manifest.sources.map((entry) => {
+            const resolved = (sources ?? []).find((source) => source.localId === entry.id);
+            return `${nameOf(entry)} (${resolved?.sourceId ?? entry.id})`;
+        });
+        const lines = [locale.sourceIntro(described.join(', '))];
+        const takeovers = (sources ?? []).filter((source) => source.takeover);
+        if (takeovers.length > 0) {
+            lines.push(locale.takeover(takeovers.map((source) => source.sourceId).join(', ')));
+            const data = takeovers.flatMap((source) => [
+                ...source.legacy.storeKeys,
+                ...source.legacy.partitions.map((partition) => `partition ${partition}`),
+                ...source.legacy.userDataDirs.map((folder) => `userData/${folder}`),
+                ...(source.legacy.cacheDirs ?? []).map((folder) => `cache/${folder}`),
+            ]);
+            if (data.length > 0) lines.push(locale.takeoverData(data.join(', ')));
+            // Its own native files: the names it may resolve that resolve in its folder on this system (nativeFiles.cjs
+            // resolveModNativeFile, as api.native will). Without the folder to look in, every name it may resolve.
+            const ownNative = [...new Set(takeovers.flatMap((source) => source.legacy.ownNative ?? []))]
+                .filter((name) => !dirPath || Boolean(resolveModNativeFile(name, dirPath, { platform: process.platform, arch: process.arch, fs }).path));
+            if (ownNative.length > 0) lines.push(locale.takeoverNative(ownNative.join(', ')));
+        }
+        const hosts = (field) => [...new Set(manifest.sources.flatMap((entry) => entry[field] ?? []))];
+        if (hosts('certificateExceptions').length > 0) lines.push(locale.certificateExceptions(hosts('certificateExceptions').join(', ')));
+        if (hosts('lyricRelayHosts').length > 0) lines.push(locale.lyricRelayHosts(hosts('lyricRelayHosts').join(', ')));
+        // A source that connects to a server the user enters (a NAS at home) and accepts its self-signed certificate
+        // (`sources[].selfSignedUserServers`): its main entry makes those requests itself, so this is what it says it does.
+        const selfSigned = manifest.sources.filter((entry) => entry.selfSignedUserServers === true).map((entry) => nameOf(entry));
+        if (selfSigned.length > 0) lines.push(locale.selfSignedUserServers(selfSigned.join(', ')));
+        return lines;
+    };
+
+    const showDialog = async (options) => {
+        const win = getMainWindowSafe();
+        const result = win && !win.isDestroyed()
+            ? await dialog.showMessageBox(win, options)
+            : await dialog.showMessageBox(options);
+        return result.response === 1;
+    };
+
+    /*
+     * The one confirmation of an override copy (plan §5.1): a signed, newer copy of a built-in mod. The label
+     * line says the signature as it is.
+     */
+    const confirmOverride = async (runtime, digest, signature, builtinVersion) => {
+        const locale = resolveDialogLocale();
+        const keyText = signature.keyLabel ? `${signature.keyLabel}, ${signature.keyId}` : signature.keyId;
+        return showDialog({
+            type: 'warning',
+            title: locale.overrideTitle,
+            message: locale.overrideMessage(runtime.manifest.name, runtime.manifest.id, runtime.manifest.version, builtinVersion ?? '-'),
+            detail: [
+                locale.overrideDetail,
+                '',
+                locale.signatureVerified(keyText),
+                ...sourceLines(locale, runtime.manifest, runtime.source?.sources, runtime.dirPath),
+                `${locale.location}${runtime.dirPath ?? '-'}`,
+                `${locale.fingerprint}${shortDigest(digest)}`,
+                '',
+                locale.rebind,
+            ].join('\n'),
+            buttons: [locale.cancel, locale.overrideConfirm],
+            defaultId: 0,
+            cancelId: 0,
+            noLink: true,
+        });
+    };
+
+    /*
+     * "Clear data" of a source (plan §5.3): what goes is listed, and the main process asks, so page code cannot
+     * clear a sign-in on its own. `items` is describeSourceData's answer.
+     */
+    const confirmClearSourceData = async (sourceId, items) => {
+        const locale = resolveDialogLocale();
+        const lines = [
+            ...items.storeKeys,
+            ...items.partitions.map((partition) => `partition ${partition}`),
+            ...items.userDataDirs,
+            ...(items.cacheDirs ?? []),
+            items.modData,
+            items.modCache,
+            ...items.pageStorePrefixes.map((prefix) => `${prefix}*`),
+        ];
+        return showDialog({
+            type: 'warning',
+            title: locale.clearTitle,
+            message: locale.clearMessage(sourceId),
+            detail: [locale.clearDetail, '', ...lines].join('\n'),
+            buttons: [locale.cancel, locale.clearConfirm],
+            defaultId: 0,
+            cancelId: 0,
+            noLink: true,
+        });
+    };
+
+    /*
+     * The one confirmation before community mods are allowed (communityMods.cjs): what they are and what an enabled
+     * one can do. Each mod is still confirmed on its own (confirmEnableMod) before it runs.
+     */
+    const confirmCommunityMods = async () => {
+        const locale = resolveDialogLocale();
+        return showDialog({
+            type: 'warning',
+            title: locale.communityTitle,
+            message: locale.communityMessage,
+            detail: locale.communityDetail,
+            buttons: [locale.cancel, locale.communityConfirm],
+            defaultId: 0,
+            cancelId: 0,
+            noLink: true,
+        });
+    };
+
     const confirmEnableMod = async (runtime, digest, signature) => {
         const locale = resolveDialogLocale();
         const keyText = signature.keyLabel ? `${signature.keyLabel}, ${signature.keyId}` : signature.keyId;
@@ -318,10 +586,12 @@ const createModApproval = ({ app, store, enabledKey, getMainWindowSafe, getLocal
             ...(permissions.includes('visualizer.beatEffects') ? [locale.visualizerBeatEffects] : []),
             ...(permissions.includes('visualizer.background') ? [locale.visualizerBackground] : []),
             ...(permissions.includes('visualizer.animationIntensity') ? [locale.visualizerAnimationIntensity] : []),
+            ...(permissions.includes('theme.write') ? [locale.themeWrite] : []),
             client ? `${locale.client}${client}` : locale.noClient,
             ...(experimental.length > 0 ? [`${locale.experimental}${experimental.join(', ')}`] : []),
             ...(embedOrigins.length > 0 ? [`${locale.embedOrigins}${embedOrigins.join(', ')}`] : []),
             ...(folia ? [`${locale.folia}${folia}`] : []),
+            ...sourceLines(locale, runtime.manifest, runtime.source?.sources, runtime.dirPath),
             `${locale.location}${runtime.dirPath ?? '-'}`,
             `${locale.fingerprint}${shortDigest(digest)}`,
             '',
@@ -345,7 +615,19 @@ const createModApproval = ({ app, store, enabledKey, getMainWindowSafe, getLocal
         return result.response === 1;
     };
 
-    return { writeTrust, isDevSourceMod, resolveTrust, confirmEnableMod };
+    return {
+        writeTrust,
+        isDevSourceMod,
+        resolveTrust,
+        confirmEnableMod,
+        readBuiltinEnabled,
+        writeBuiltinEnabled,
+        isOverrideConfirmed,
+        writeOverrideApproval,
+        confirmOverride,
+        confirmClearSourceData,
+        confirmCommunityMods,
+    };
 };
 
 module.exports = { createModApproval, TRUST_DIALOG_LOCALE };

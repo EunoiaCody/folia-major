@@ -16,12 +16,12 @@
 | components | 1024+ |
 | test/dev | 1024+ |
 | library | 256+ |
-| services | 256+ |
+| 其他 | 256+ |
 | backend/electron | 128+ |
+| services | 128+ |
+| src (其他) | 128+ |
 | utils | 128+ |
 | hooks | 64+ |
-| src (其他) | 64+ |
-| 其他 | 64+ |
 | stores | 32+ |
 | types | 16+ |
 | i18n | 8+ |
@@ -35,18 +35,20 @@
 | --- | --- |
 | 1024+ | `src/types.ts` |
 | 256+ | `src/types/onlineMusic.ts` |
+| 128+ | `src/components/modal/settings/kit/index.ts` |
+| 128+ | `src/services/onlineMusic/omni.ts` |
 | 128+ | `src/stores/usePlaybackStore.ts` |
 | 128+ | `src/types/ponder.ts` |
 | 128+ | `src/utils/appPlaybackGuards.ts` |
 | 64+ | `src/components/command-palette/types.ts` |
-| 64+ | `src/components/modal/settings/kit/index.ts` |
 | 64+ | `src/components/visualizer/definition.ts` |
 | 64+ | `src/i18n/config.ts` |
 | 64+ | `src/library/core/collection/collection.contract.ts` |
 | 64+ | `src/library/core/suite/suite.contract.ts` |
 | 64+ | `src/mods/folium/contract.ts` |
+| 64+ | `src/mods/types.ts` |
 | 64+ | `src/services/db.ts` |
-| 64+ | `src/services/onlineMusic/omni.ts` |
+| 64+ | `src/services/onlineMusic/providerRegistry.ts` |
 | 64+ | `src/stores/useAppViewStore.ts` |
 | 64+ | `src/stores/useAudioSettingsStore.ts` |
 | 64+ | `src/stores/useOnlineProviderAccountStore.ts` |
@@ -60,12 +62,12 @@
 | 32+ | `src/components/ponder/surfaces/relativeRectStyle.ts` |
 | 32+ | `src/components/ponder/surfaces/surfaceDeclarations.ts` |
 | 32+ | `src/components/visualizer/backgrounds/definition.ts` |
-| 32+ | `src/components/visualizer/colorMix.ts` |
 | 32+ | `src/components/visualizer/hanabi/types.ts` |
 | 32+ | `src/components/visualizer/machi/engine/materials.ts` |
 | 32+ | `src/components/visualizer/registry.tsx` |
 | 32+ | `src/components/visualizer/tuningDefinition.ts` |
 | 32+ | `src/components/visualizer/tuningRegistry.ts` |
+| 32+ | `src/components/visualizer/visualizerSeedHash.ts` |
 | 32+ | `src/components/wall/layout.ts` |
 | 32+ | `src/components/wall/wallSlots.ts` |
 | 32+ | `src/hooks/useReducedMotionFor.ts` |
@@ -74,10 +76,13 @@
 | 32+ | `src/library/core/home/homeModel.contract.ts` |
 | 32+ | `src/library/suites/bravais/bravaisConstants.ts` |
 | 32+ | `src/library/suites/bravais/bravaisLayer.ts` |
-| 32+ | `src/mods/types.ts` |
+| 32+ | `src/mods/folium/api.ts` |
+| 32+ | `src/mods/folium/sources/contract.ts` |
+| 32+ | `src/mods/runtime/status.ts` |
+| 32+ | `src/services/appDatabase.ts` |
 | 32+ | `src/services/baseThemes.ts` |
+| 32+ | `src/services/navidromeService.ts` |
 | 32+ | `src/services/onlineMusic/failure/onlineFailureCase.ts` |
-| 32+ | `src/services/onlineMusic/providerRegistry.ts` |
 | 32+ | `src/services/onlineMusic/songMetadata.ts` |
 | 32+ | `src/stores/motionSignals.ts` |
 | 32+ | `src/stores/storagePrimitives.ts` |
@@ -86,10 +91,11 @@
 | 32+ | `src/stores/useSettingsModalStore.ts` |
 | 32+ | `src/stores/useThemeSettingsStore.ts` |
 | 32+ | `src/stores/useVisualizerSettingsStore.ts` |
+| 32+ | `src/types/foliaPlaylist.ts` |
 | 32+ | `src/types/localLibrary.ts` |
 | 32+ | `src/types/navidrome.ts` |
+| 32+ | `src/utils/colorMix.ts` |
 | 32+ | `src/utils/coverUrl.ts` |
-| 32+ | `src/utils/errorText.ts` |
 | 32+ | `src/utils/fontStacks.ts` |
 | 32+ | `src/utils/lyricRenderQuality.ts` |
 | 32+ | `src/utils/lyrics/graphemeTiming.ts` |
@@ -124,6 +130,7 @@
 - `dev/probes/lattice.probe.tsx`
 - `dev/probes/latticeExit.probe.tsx`
 - `dev/probes/latticePerformance.probe.tsx`
+- `dev/probes/latticeRadio.probe.tsx`
 - `dev/probes/latticeTitle.probe.tsx`
 - `dev/probes/latticeTitleExpansion.probe.tsx`
 - `dev/probes/libraryBehavior.probe.tsx`
@@ -278,6 +285,7 @@
 - `src/components/visualizer/hanabi/entry.tsx`
 - `src/components/visualizer/lumiere/entry.tsx`
 - `src/components/visualizer/machi/entry.tsx`
+- `src/components/visualizer/metaphor/entry.tsx`
 - `src/components/visualizer/monet/entry.tsx`
 - `src/components/visualizer/nebbia/entry.tsx`
 - `src/components/visualizer/partita/entry.tsx`
@@ -303,6 +311,7 @@
 - `src/components/visualizer/hanabi/tuning.ts`
 - `src/components/visualizer/lumiere/tuning.ts`
 - `src/components/visualizer/machi/tuning.ts`
+- `src/components/visualizer/metaphor/tuning.ts`
 - `src/components/visualizer/monet/tuning.ts`
 - `src/components/visualizer/nebbia/tuning.ts`
 - `src/components/visualizer/partita/tuning.ts`
@@ -328,6 +337,7 @@
 - `src/components/visualizer/hanabi/tuning.ts`
 - `src/components/visualizer/lumiere/tuning.ts`
 - `src/components/visualizer/machi/tuning.ts`
+- `src/components/visualizer/metaphor/tuning.ts`
 - `src/components/visualizer/monet/tuning.ts`
 - `src/components/visualizer/nebbia/tuning.ts`
 - `src/components/visualizer/partita/tuning.ts`
@@ -344,18 +354,11 @@
 下面这些边的依赖方向本身就是错的：
 
 - D101 `src/stores/useVisualizerSettingsStore.ts` → `src/components/visualizer/registry.tsx`  —— store 不应依赖组件
-- D102 `src/utils/lyrics/lyricMatchSources.ts` → `src/stores/useOnlineProviderAccountStore.ts`  —— 纯变换不应依赖 UI 或状态
 
 ### 目录归属存疑
 
 这些边命中了规则，但目标模块在运行时根本不含 UI（不传递依赖 react）。
 依赖方向没问题，是文件住在了 UI 目录（`src/components/`、`src/library/` 的 suites / app）下面。修法是移动文件，不是改依赖。
 
-- D190 `src/services/obs/visualSettingsConfig.ts` → `src/components/visualizer/tuningRegistry.ts`
-- D190 `src/services/ponder/pagePonderTarget.ts` → `src/components/modal/settings/navigation/settingsAnchorModel.ts`
-- D190 `src/services/sync/settingsSnapshot.ts` → `src/components/visualizer/tuningRegistry.ts`
 - D190 `src/stores/usePlaybackStore.ts` → `src/components/app/playback/createCoverUrlResolver.ts`
-- D190 `src/stores/useSettingsModalStore.ts` → `src/components/command-palette/pinnedCommandPreferences.ts`
-- D190 `src/stores/useVisualizerSettingsStore.ts` → `src/components/visualizer/tuningRegistry.ts`
-- D190 `src/utils/themeColorMath.ts` → `src/components/visualizer/colorMix.ts`
 

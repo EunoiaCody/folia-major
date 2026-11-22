@@ -1,6 +1,7 @@
-import { useCallback, useMemo, useRef } from 'react';
+import { useCallback, useMemo, useRef, useSyncExternalStore } from 'react';
 import type { SongResult } from '../../../types';
-import { isSongUnavailable, shouldAutoReplaceUnavailableSong } from '../../../services/onlineMusic/songAvailability';
+import { readTrackSourcesVersion, subscribeTrackSources } from '../../../services/foliaPlaylist/trackSourceState';
+import { isSongSourceMissing, isSongUnavailable, shouldAutoReplaceUnavailableSong } from '../../../services/onlineMusic/songAvailability';
 import {
     buildDuplicateOccurrences,
     entryKeyAt,
@@ -15,9 +16,10 @@ import {
     type LocalTrackSortContext,
 } from './collectionView';
 
-// 无版权（grey）歌曲在用户开启「无版权替代播放」时保留在可播放集合里，交给播放链路做 unblock / 跨 provider 替代。
+// 无版权（grey）歌曲在用户开启「无版权替代播放」时保留在可播放集合里，交给播放链路做 unblock / 跨 provider 替代；
+// 来源不在（音源停用、只用于匹配、卸载、Navidrome 没配）的行照旧排除：替代播放换的是音源，不会把停用的来源换回来。
 const isTrackExcluded = (track: SongResult): boolean => (
-    isSongUnavailable(track) && !shouldAutoReplaceUnavailableSong(track)
+    isSongSourceMissing(track) || (isSongUnavailable(track) && !shouldAutoReplaceUnavailableSong(track))
 );
 
 // src/library/core/collection/useCollectionView.ts
@@ -54,7 +56,11 @@ export const useCollectionView = ({
         () => deriveDisplayTracks(tracks, hiddenKeys, localSort),
         [hiddenKeys, localSort, tracks],
     );
-    const playableTracks = useMemo(() => derivePlayableTracks(displayTracks, isTrackExcluded), [displayTracks]);
+    // 播不了的行：平台说下架的（除非用户开了无版权替代），以及来源此刻不在的（Folia 聚合歌单里音源被停用、卸载的那几行）。
+    // 来源的状态会变，跟着音源登记表重算。
+    const sourcesVersion = useSyncExternalStore(subscribeTrackSources, readTrackSourcesVersion);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- sourcesVersion 是 isSongSourceMissing 读的状态
+    const playableTracks = useMemo(() => derivePlayableTracks(displayTracks, isTrackExcluded), [displayTracks, sourcesVersion]);
 
     const occurrenceCacheRef = useRef<DuplicateOccurrenceCache | null>(null);
     const occurrences = useMemo(() => {

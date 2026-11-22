@@ -1,5 +1,5 @@
 import React from 'react';
-import { ChevronDown, Pause, Play, Radio, SkipBack, SkipForward, Trash2 } from 'lucide-react';
+import { ChevronDown, PanelsTopLeft, Pause, Play, Radio, SkipBack, SkipForward, Trash2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { PlayerState } from '../../types';
 import { omni } from '../../services/onlineMusic/omni';
@@ -8,6 +8,7 @@ import { useOnlineProviderAccountStore } from '../../stores/useOnlineProviderAcc
 import { selectActiveStation, selectStationCatalog, usePersonalFmModeStore } from '../../stores/usePersonalFmModeStore';
 import { usePlaybackStore } from '../../stores/usePlaybackStore';
 import { getPlaybackSourceRef } from '../../utils/appPlaybackGuards';
+import { likesGoToFolia } from '../../utils/foliaHeart';
 import { Tooltip } from '../modal/settings/kit';
 import { IconSwap } from './shell/IconSwap';
 import { LikeButton } from './shell/LikeButton';
@@ -25,6 +26,8 @@ interface FmTabProps {
     modeLabel: string;
     /** Absent when the active provider has no FM modes, which hides the entry entirely. */
     onOpenModePicker?: () => void;
+    /** 打开 Lattice（私人 FM 下是电台墙）；队列页签的同一个入口，FM 时队列页签被这一页换掉。 */
+    onOpenLattice?: () => void;
     onTogglePlay: () => void;
     onNextTrack: () => void;
     onPrevTrack: () => void;
@@ -41,6 +44,7 @@ const FmTab: React.FC<FmTabProps> = ({
     playerState,
     modeLabel,
     onOpenModePicker,
+    onOpenLattice,
     onTogglePlay,
     onNextTrack,
     onPrevTrack,
@@ -56,6 +60,7 @@ const FmTab: React.FC<FmTabProps> = ({
     // out it could never be pressed. Any other reason to grey the heart out passes, and it stays.
     const hasLike = usePlaybackStore(state => !state.currentSong
         || getPlaybackSourceRef(state.currentSong).kind !== 'online'
+        || likesGoToFolia(state.currentSong)
         || omni.canLikeSong(state.currentSong));
     // The button opens the picker of what FM plays, so its hint names the same thing: the extra radio on air
     // by its own name, the Personal FM otherwise.
@@ -76,13 +81,23 @@ const FmTab: React.FC<FmTabProps> = ({
             {!isStationOnAir && <FmRecommendationPreferencesButton />}
             {/* Opens the command palette's FM mode picker: the same surface the palette offers, so
                 the mode lives in one place instead of being reimplemented inside the panel. */}
-            {onOpenModePicker && (
-                <Tooltip text={getPersonalFmOpenPickerLabel(stationCatalog)} className="inline-flex max-w-full">
-                    <PanelButton icon={Radio} onClick={onOpenModePicker}>
-                        {modeLabel}
-                        <ChevronDown size={13} className="text-[color:var(--st-t2)]" />
-                    </PanelButton>
-                </Tooltip>
+            {/* 右边是去 Lattice 的入口（电台墙），和队列页签上那颗同一个图标。 */}
+            {(onOpenModePicker || onOpenLattice) && (
+                <div className="flex max-w-full items-center gap-1.5">
+                    {onOpenModePicker && (
+                        <Tooltip text={getPersonalFmOpenPickerLabel(stationCatalog)} className="inline-flex min-w-0 max-w-full">
+                            <PanelButton icon={Radio} onClick={onOpenModePicker}>
+                                {modeLabel}
+                                <ChevronDown size={13} className="text-[color:var(--st-t2)]" />
+                            </PanelButton>
+                        </Tooltip>
+                    )}
+                    {onOpenLattice && (
+                        <PanelIconButton size="m" label={t('home.lattice')} onClick={onOpenLattice}>
+                            <PanelsTopLeft size={17} />
+                        </PanelIconButton>
+                    )}
+                </div>
             )}
 
             {/* Three columns, so play stays in the middle of the line when there is no heart. */}

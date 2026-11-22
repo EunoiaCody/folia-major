@@ -31,10 +31,13 @@ import { useAppChromeStore } from '../../../../stores/useAppChromeStore';
 import { useThemeSettingsStore } from '../../../../stores/useThemeSettingsStore';
 import { usePlayerChromeSettingsStore } from '../../../../stores/usePlayerChromeSettingsStore';
 import { useTypographySettingsStore } from '../../../../stores/useTypographySettingsStore';
+import { useDesktopSettingsStore } from '../../../../stores/useDesktopSettingsStore';
+import { openSettings } from '../../../../stores/useSettingsModalStore';
 import { currentTime } from '../../../../stores/motionSignals';
 import { useRemoteControlActions } from '../../../../hooks/useRemoteControlActions';
 import { subscribeRemoteActions } from '../../../../mods/folium/registries/remoteActions';
 import { errorMessage } from '../../../../utils/errorText';
+import { likesGoToFolia } from '../../../../utils/foliaHeart';
 import { getObservedMedia } from '../../../../services/hifi/hifiMediaShim';
 import { seekHifiRoute } from '../../../hifi/hifiRouteTransport';
 import { seekExternalPlayback } from '../../../../services/onlineMusic/externalPlayback';
@@ -143,6 +146,7 @@ export const useElectronPlaybackBridge = ({
     const transparentPlayerBackground = usePlayerChromeSettingsStore(state => state.transparentPlayerBackground);
     const isDaylight = useThemeSettingsStore(state => state.isDaylight);
     const subtitleContentMode = useTypographySettingsStore(state => state.subtitleContentMode);
+    const remoteLyricLayout = useDesktopSettingsStore(state => state.remoteControlLyricLayout);
     const activePlaybackContext = usePlaybackStore(state => state.activePlaybackContext);
     const audioSrc = usePlaybackStore(state => state.audioSrc);
     // On the HiFi route the clock and source below are read off the HiFi media shim instead of a deck.
@@ -183,7 +187,7 @@ export const useElectronPlaybackBridge = ({
         && (
             currentSongSource?.kind === 'local'
             || currentSongSource?.kind === 'navidrome'
-            || (currentSongSource?.kind === 'online' && omni.canLikeSong(currentSong))
+            || (currentSongSource?.kind === 'online' && (likesGoToFolia(currentSong) || omni.canLikeSong(currentSong)))
         ),
     );
     const likeUnavailableProvider = currentSongSource?.kind === 'online' && !canLikeCurrentSong
@@ -313,6 +317,7 @@ export const useElectronPlaybackBridge = ({
         return {
             ...snapshot,
             clockRevision: remoteClockRevision.current,
+            remoteLyricLayout,
             ...(options.includeQueue
                 ? {
                     queue: buildRemoteQueueItems(playQueue, {
@@ -458,7 +463,7 @@ export const useElectronPlaybackBridge = ({
             title: isNowPlayingStageActive ? externalTrackTitle : model.hasTrack ? model.title : null,
             artist: isNowPlayingStageActive ? externalTrackArtist : model.hasTrack ? model.artist : null,
             loopMode: model.loopMode,
-            canCycleLoop: model.hasTrack && !model.isFmMode,
+            canCycleLoop: model.hasTrack,
         }).catch((error) => {
             console.warn('[Electron] Failed to update playback controls', error);
         });
@@ -564,7 +569,7 @@ export const useElectronPlaybackBridge = ({
             window.removeEventListener('resize', handleResize);
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [cachedCoverUrl, coverUrl, currentSong, duration, effectiveLoopMode, exportState, isDaylight, isFmMode, isNowPlayingStageActive, isPlayerChromeHidden, playerChromeVisibilityMode, lyrics, lyricTimelineOffsetMs, mainWindowClickThroughEnabled, playbackRoute, playbackSyncBridgeStatus, playQueue, playerState, showTransparentWindowBorder, subtitleContentMode, transparentPlayerBackground, isLiked]);
+    }, [cachedCoverUrl, coverUrl, currentSong, duration, effectiveLoopMode, exportState, isDaylight, isFmMode, isNowPlayingStageActive, isPlayerChromeHidden, playerChromeVisibilityMode, lyrics, lyricTimelineOffsetMs, mainWindowClickThroughEnabled, playbackRoute, playbackSyncBridgeStatus, playQueue, playerState, showTransparentWindowBorder, subtitleContentMode, remoteLyricLayout, transparentPlayerBackground, isLiked]);
 
     useEffect(() => {
         if (!playbackSyncBridgeStatus.discordPresenceEnabled || !window.electron?.publishDiscordPresenceSnapshot) {
@@ -631,6 +636,12 @@ export const useElectronPlaybackBridge = ({
             }
 
             if (command.type === 'open-export') {
+                return;
+            }
+
+            // The main process has already brought this window up.
+            if (command.type === 'open-remote-settings') {
+                openSettings('options', 'remote');
                 return;
             }
 

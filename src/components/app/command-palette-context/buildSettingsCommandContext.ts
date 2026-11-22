@@ -1,8 +1,10 @@
 import type { CommandPaletteContext } from '../../command-palette/types';
 import type { LyricStaffPolicy } from '../../../utils/lyrics/staffCreditsPolicy';
 import type { ThemeGenerationSource } from '../../../services/themePreferences';
-import { useAudioSettingsStore } from '../../../stores/useAudioSettingsStore';
+import { useAudioSettingsStore, isPlaybackReportEnabled } from '../../../stores/useAudioSettingsStore';
 import { useAutomixSettingsStore } from '../../../stores/useAutomixSettingsStore';
+import { useStemMixerStore } from '../../../stores/useStemMixerStore';
+import { stemMixerDeviceBlock } from '../../../services/stemMixer/stemMixerAvailability';
 import { useHifiSettingsStore } from '../../../stores/useHifiSettingsStore';
 import { hifiEngine, useHifiEngineStore } from '../../../services/hifi/hifiEngine';
 import { HIFI_PLATFORM } from '../../modal/settings/pages/hifi/options';
@@ -10,7 +12,7 @@ import { canOfferRuntimeDownload, isRuntimeInstalling } from '../../modal/settin
 import { useDesktopSettingsStore } from '../../../stores/useDesktopSettingsStore';
 import { useLocalLibrarySettingsStore } from '../../../stores/useLocalLibrarySettingsStore';
 import { isLocalLibraryAutoScanSupported } from '../../../services/localLibraryAutoScan';
-import { isPlaybackReportReady } from '../../../services/onlineMusic/playbackReportGate';
+import { isPlaybackReportReady, getPlaybackReportSettingProviderId } from '../../../services/onlineMusic/playbackReportGate';
 import { useLyricSettingsStore } from '../../../stores/useLyricSettingsStore';
 import { useGridViewSettingsStore } from '../../../stores/useGridViewSettingsStore';
 import { useLatticeSettingsStore } from '../../../stores/useLatticeSettingsStore';
@@ -32,6 +34,7 @@ import { useThemeQuickEditorStore } from '../../../stores/useThemeQuickEditorSto
 import { usePlayerBottomBarLayoutStore } from '../../../stores/usePlayerBottomBarLayoutStore';
 import type { SongResult } from '../../../types';
 import { cycleSubtitleContentMode } from '../../../utils/lyrics/alternateText';
+import { withRemoteLyricPairs } from '../../../utils/remoteLyricLayout';
 
 // src/components/app/command-palette-context/buildSettingsCommandContext.ts
 // The `settings` namespace of the palette context.
@@ -107,6 +110,10 @@ export const buildSettingsCommandContext = (
             const wall = useLibraryWallLookStore.getState();
             wall.setCollectionStackEdges(!wall.collectionStackEdges);
         },
+        toggleLibraryWallCollectionTilt: () => {
+            const wall = useLibraryWallLookStore.getState();
+            wall.setCollectionTilt(!wall.collectionTilt);
+        },
         libraryWallSeamClear: () => useLibraryWallLookStore.getState().seamClear,
         toggleLibraryWallSeamClear: () => {
             const wall = useLibraryWallLookStore.getState();
@@ -146,6 +153,12 @@ export const buildSettingsCommandContext = (
             !useGridViewSettingsStore.getState().gridViewSquareCards,
         ),
         canUseGridViewSquareCards: () => useGridViewSettingsStore.getState().gridViewFullBleedCover,
+        toggleLatticeRadioHideUpcoming: () => useLatticeSettingsStore.getState().handleToggleLatticeRadioHideUpcoming(
+            !useLatticeSettingsStore.getState().latticeRadioHideUpcoming,
+        ),
+        toggleLatticeWallForm: () => useLatticeSettingsStore.getState().handleSetLatticeWallForm(
+            useLatticeSettingsStore.getState().latticeWallForm === 'radio' ? 'poster' : 'radio',
+        ),
         toggleLatticeVignette: () => useLatticeSettingsStore.getState().handleToggleLatticeVignette(
             !useLatticeSettingsStore.getState().latticeVignette,
         ),
@@ -217,9 +230,11 @@ export const buildSettingsCommandContext = (
         canAutoScanLocalLibrary: isLocalLibraryAutoScanSupported,
         toggleLocalLibraryAutoScan: () => useLocalLibrarySettingsStore.getState().toggleAutoScan(),
         canReportPlayback: () => isPlaybackReportReady(),
-        togglePlaybackReport: () => audio.handleToggleNeteaseScrobble(
-            !useAudioSettingsStore.getState().neteaseScrobbleEnabled,
-        ),
+        // The setting of the source that takes reports (stored per source, Folium 2.0 S1).
+        togglePlaybackReport: () => {
+            const providerId = getPlaybackReportSettingProviderId();
+            if (providerId) audio.handleSetPlaybackReport(providerId, !isPlaybackReportEnabled(useAudioSettingsStore.getState(), providerId));
+        },
         toggleAutoAiLyricSegmentation: () => {
             const lyric = useLyricSettingsStore.getState();
             lyric.handleToggleAutoAiLyricSegmentation(!lyric.autoAiLyricSegmentation);
@@ -230,6 +245,9 @@ export const buildSettingsCommandContext = (
         },
         voiceInputPauseSupported: deps.voiceInputPauseSupported,
         modSystemEnabled: desktop.modSystemEnabled,
+        toggleCommunityMods: () => {
+            void desktop.handleToggleCommunityMods(!useDesktopSettingsStore.getState().modCommunityEnabled);
+        },
         toggleVoiceInputPause: () => desktop.handleToggleVoiceInputPause(
             !useDesktopSettingsStore.getState().voiceInputPauseEnabled,
         ),
@@ -239,6 +257,10 @@ export const buildSettingsCommandContext = (
         toggleBackgroundThrottling: () => desktop.handleToggleBackgroundThrottling(
             !useDesktopSettingsStore.getState().backgroundThrottling,
         ),
+        toggleUiZoom: () => desktop.handleToggleUiZoom(
+            !useDesktopSettingsStore.getState().uiZoomEnabled,
+        ),
+        stepUiZoom: direction => desktop.handleStepUiZoom(direction),
         toggleWallpaperMode: () => desktop.handleToggleWallpaperMode(
             !useDesktopSettingsStore.getState().wallpaperMode,
         ),
@@ -254,6 +276,10 @@ export const buildSettingsCommandContext = (
         toggleRemoteControlTextShade: () => desktop.handleToggleRemoteControlTextShade(
             !useDesktopSettingsStore.getState().remoteControlTextShade,
         ),
+        toggleRemoteLyricPairs: () => {
+            const layout = useDesktopSettingsStore.getState().remoteControlLyricLayout;
+            desktop.handleSetRemoteControlLyricLayout(withRemoteLyricPairs(layout, layout.pairs === 2 ? 1 : 2));
+        },
         unlockRemoteControl: () => desktop.handleToggleRemoteControlClickThrough(false),
         toggleObsKeepMainWindowAnimation: () => useStageSettingsStore.getState().handleToggleObsKeepMainWindowAnimation(
             !useStageSettingsStore.getState().obsKeepMainWindowAnimation,
@@ -306,6 +332,17 @@ export const buildSettingsCommandContext = (
             !useAudioSettingsStore.getState().unlockUseCrossProviderFallback,
         ),
         canUseTransitionPerformance: deps.canUseTransitionPerformance,
+        toggleStemMixer: () => {
+            const mixer = useStemMixerStore.getState();
+            mixer.handleToggleStemMixer(!mixer.stemMixerEnabled);
+        },
+        applyStemMixerPreset: (preset) => {
+            const mixer = useStemMixerStore.getState();
+            mixer.handleApplyStemMixerPreset(preset);
+            // 原样不用开：开了也只是透传。
+            if (!mixer.stemMixerEnabled && preset !== 'reset') mixer.handleToggleStemMixer(true);
+        },
+        canUseStemMixer: () => stemMixerDeviceBlock() === null,
         // Read at the press, like the settings page: none of these rebuild the context.
         isHifiSupported: () => useHifiEngineStore.getState().supported,
         isHifiEnabled: () => useHifiSettingsStore.getState().enabled,

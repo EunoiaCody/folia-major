@@ -106,6 +106,11 @@ jobs:
           APP_RELEASE_CHANNEL: internal
         run: npm run build
 
+      # Folium 2.0：内置音源（sources/<id>/）要先用 dev/sources/build.mjs 构建进 dist-mods/，
+      # build/bundledSources.mjs（package.json 的 build.extends）才打包得出来；不建就打包会直接报错。
+      - name: Build built-in source mods
+        run: npm run sources:build
+
       - name: Package Electron app
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false

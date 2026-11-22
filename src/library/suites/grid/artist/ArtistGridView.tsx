@@ -60,7 +60,6 @@ import { ArtistGridInfoCutInPanel } from './ArtistGridInfoCutInPanel';
 import { ArtistPicture } from './ArtistPicture';
 import { ArtistHeaderPillButton } from './ArtistHeaderPillButton';
 import { setStatusMessage } from '../../../../stores/useStatusMessageStore';
-import { isSongUnavailable, shouldAutoReplaceUnavailableSong } from '../../../../services/onlineMusic/songAvailability';
 
 /*
  * ArtistGridView.tsx
@@ -602,12 +601,6 @@ const ArtistGridView: React.FC<ArtistGridViewProps> = ({
 
         return itemsList;
     }, [albumGridItems, artistInfo, loading, topSongs]);
-    // Queue context for track selection: unavailable tracks are kept when auto-replace is on
-    // so playback can fall back to a matched source from another provider.
-    const playableTopSongs = useMemo(
-        () => topSongs.filter(song => !isSongUnavailable(song) || shouldAutoReplaceUnavailableSong(song)),
-        [topSongs]
-    );
     const canPlaySong = offers('play');
     const canEnqueueSong = offers('enqueue');
     const canOpenAlbum = offers('open-album');
